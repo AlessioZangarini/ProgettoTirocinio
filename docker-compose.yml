@@ -1,0 +1,40 @@
+version: '2'
+
+networks:
+  fabric:
+
+services:
+  peer0.org1.example.com:
+    container_name: peer0.org1.example.com
+    image: hyperledger/fabric-peer:latest
+    environment:
+      - CORE_PEER_ID=peer0.org1.example.com
+      - CORE_PEER_ADDRESS=peer0.org1.example.com:7051
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.org1.example.com:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.org1.example.com:7051
+      - CORE_PEER_LOCALMSPID=Org1MSP
+    ports:
+      - "7051:7051"
+      - "7053:7053"
+    volumes:
+      - /var/run/:/host/var/run/
+      - ./crypto-config/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp:/etc/hyperledger/fabric/msp
+      - ./crypto-config/peerOrganizations/org1.example.com/users:/etc/hyperledger/fabric/users
+    networks:
+      - fabric
+
+  chaincode:
+    container_name: edgenode_chaincode
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - CORE_PEER_ADDRESS=peer0.org1.example.com:7051
+      - CORE_CHAINCODE_ID_NAME=edgenode:1.0
+    volumes:
+      - ./chaincode:/usr/local/src/edgenode
+    command: ["node", "/usr/local/src/edgenode/chaincode.js"]
+    networks:
+      - fabric
+    depends_on:
+      - peer0.org1.example.com

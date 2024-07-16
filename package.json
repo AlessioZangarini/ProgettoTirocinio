@@ -1,16 +1,22 @@
 {
   "name": "progettotirocinio",
   "version": "1.0.0",
-  "description": "Design and implementation of a Indoor Air Quality scenario and integration with blockchain technology",
+  "description": "Design and implementation of an Indoor Air Quality scenario and integration with blockchain technology",
   "main": "index.js",
   "scripts": {
+    "start": "fabric-chaincode-node start",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Alessio Zangarini",
   "license": "ISC",
   "dependencies": {
-    "crypto-js": "^4.2.0",
+    "fabric-contract-api": "^2.5.6",
     "fabric-shim": "^2.5.6",
-    "google-protobuf": "^3.21.2"
+    "json-stringify-deterministic": "^1.0.7",
+    "sort-keys-recursive": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=12",
+    "npm": ">=6.9"
   }
 }
