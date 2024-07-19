@@ -13,6 +13,7 @@
     "fabric-contract-api": "^2.5.6",
     "fabric-shim": "^2.5.6",
     "json-stringify-deterministic": "^1.0.7",
+    "mongodb": "^4.17.2",
     "sort-keys-recursive": "^2.1.9"
   },
   "engines": {
