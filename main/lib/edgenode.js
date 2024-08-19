@@ -19,27 +19,40 @@ class Edgenode extends Contract {
     }
 
     // Register data in MongoDB and on the blockchain
-    async registerDataDB(ctx) {
+    async registerDataDB(ctx, id, build, floor, CO2, PM25, VOCs) {
         // Use the transaction timestamp instead of generating a new one
         const txTimestamp = ctx.stub.getTxTimestamp();
         const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
     
-        // Usa il timestamp come seed per il generatore di numeri pseudo-casuali
-        const seed = txTimestamp.seconds.low;
-        const random = require('seedrandom')(seed);
-
-        // Funzione per generare un numero casuale in un intervallo
-        const randomInRange = (min, max) => Math.floor(random() * (max - min + 1)) + min;
-
-        // Generazione di valori "casuali" ma deterministici
-        const data = {
-            timestamp: timestamp,
-            sensorId: `sensor-${randomInRange(1, 100)}`,
-            location: `Building ${String.fromCharCode(65 + randomInRange(0, 25))}, Floor ${randomInRange(1, 10)}`,
-            CO2: randomInRange(300, 1000),
-            PM25: Math.round(random() * 50 * 10) / 10,
-            VOCs: Math.round(random() * 100) / 100
-        };
+        let data;
+    
+        if(id === "" || build === "" || floor === "" || CO2 === "" || PM25 === "" || VOCs === "") {
+            // Use the timestamp as a seed for the pseudo-random number generator
+            const seed = txTimestamp.seconds.low;
+            const random = require('seedrandom')(seed);
+    
+            // Function to generate a random number in a range
+            const randomInRange = (min, max) => Math.floor(random() * (max - min + 1)) + min;
+    
+            // Generation of "random" but deterministic values
+            data = {
+                timestamp: timestamp,
+                sensorId: `sensor-${randomInRange(1, 100)}`,
+                location: `Building ${String.fromCharCode(65 + randomInRange(0, 25))}, Floor ${randomInRange(1, 10)}`,
+                CO2: randomInRange(300, 1000),
+                PM25: Math.round(random() * 50 * 100) / 100,
+                VOCs: randomInRange(0, 1000)
+            };
+        } else {
+            data = {
+                timestamp: timestamp,
+                sensorId: id,
+                location: `Building ${build}, Floor ${floor}`,
+                CO2: parseInt(CO2),
+                PM25: parseFloat(PM25),
+                VOCs: parseInt(VOCs)
+            };
+        }
 
     
         // Define the MongoDB connection URI

@@ -1,101 +1,64 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 
 const fabricSamplesPath = '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples';
-
-
-/*
-const testNetworkPath = path.join(fabricSamplesPath, 'test-network');
-const fabricConfigPath = '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/config';
-
-process.env.PATH = `${process.env.PATH}:${path.join(fabricSamplesPath, 'bin')}`;
-process.env.FABRIC_CFG_PATH = path.join(fabricSamplesPath, 'config');
-process.env.CORE_PEER_TLS_ENABLED = 'true';
-process.env.CORE_PEER_LOCALMSPID = 'Org1MSP';
-process.env.CORE_PEER_TLS_ROOTCERT_FILE = path.join(testNetworkPath, 'organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt');
-process.env.CORE_PEER_MSPCONFIGPATH = path.join(testNetworkPath, 'organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp');
-process.env.CORE_PEER_ADDRESS = 'localhost:7051';
-console.log('Main.js is loaded');
-
-console.log('FABRIC_CFG_PATH:', process.env.FABRIC_CFG_PATH);
-console.log('test-network path:', testNetworkPath);
-*/
-async function runCommand(command) {
-    try {
-      const { stdout, stderr } = await execPromise(command);
-      if (stderr) {
-        console.error(`stderr: ${stderr}`);
-      }
-      return stdout;
-    } catch (error) {
-      console.error(`Error executing command: ${error}`);
-      throw error;
-    }
-}
+let simulationInterval1 = null;
+let simulationInterval2 = null;
+let simulationTimeout = null;
+let isSimulationRunning = false; // Global variable to track simulation status
 
 function createWindow() {
-    // create window
-    const mainWindow = new BrowserWindow({
-      width: 800,
-      height: 600,
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.js'),
-        nodeIntegration: false,
-        contextIsolation: true
-      }      
-    });
-  
-    // load index.html
-    mainWindow.loadFile(path.join(__dirname, 'index.html'));
-  
-    // clear the window when it's closed
-    mainWindow.on('closed', function() {
-      mainWindow = null;
-    });
-  
-    // Esegui il comando per navigare nella cartella e avviare la shell WSL
-    //const fabricSamplesPath = '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network';
-    
-    exec(`wsl bash -c "cd '${fabricSamplesPath}' && ls"`, (error, stdout, stderr) => {
+  const mainWindow = new BrowserWindow({
+    width: 800,
+    height: 600,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      enableBlinkFeatures: 'AutofillFeaturePolicy'
+    }
+  });
+
+  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+
+  mainWindow.on('closed', function() {
+    mainWindow = null;
+  });
+
+  exec(`wsl bash -c "cd '${fabricSamplesPath}' && ls"`, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`Error executing command: ${error}`);
+      return;
+    }
+    if (stderr) {
+      console.error(`stderr: ${stderr}`);
+      return;
+    }
+    console.log(`Directory contents: ${stdout}`);
+  });
+}
+
+function execWSLCommand(command) {
+  return new Promise((resolve, reject) => {
+    exec(`wsl ${command}`, (error, stdout, stderr) => {
       if (error) {
-        console.error(`Error executing command: ${error}`);
-        return;
+        console.error(`Error executing WSL command: ${error}`);
+        reject(error);
+      } else {
+        if (stderr) console.error(`stderr: ${stderr}`);
+        resolve(stdout);
       }
-      if (stderr) {
-        console.error(`stderr: ${stderr}`);
-        return;
-      }
-      console.log(`stdout: ${stdout}`);
     });
+  });
 }
-  
-// initialization
-app.on('ready', createWindow);
 
-// quit when all windows are closed
-app.on('window-all-closed', function() {
-if (process.platform !== 'darwin') {
-    app.quit();
-}
-});
+async function invokeChaincode(funcName, args = []) {
+  console.log(`Invoking chaincode function: ${funcName} with args:`, args);
 
-// create a window when none are opened
-app.on('activate', function() {
-if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-}
-});
-
-const { ipcMain } = require('electron');
-
-ipcMain.handle('invoke-chaincode', async (event, funcName) => {
-  console.log('Received invoke-chaincode request for function:', funcName);
-
-  // Comando per invocare la chaincode con il percorso corretto
-  const command = `
+  let command = `
     PATH=/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/bin
     FABRIC_CFG_PATH=/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/config 
     CORE_PEER_TLS_ENABLED=true 
@@ -114,22 +77,129 @@ ipcMain.handle('invoke-chaincode', async (event, funcName) => {
     --tlsRootCertFiles "/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt" 
     --peerAddresses localhost:9051 
     --tlsRootCertFiles "/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt" 
-    -c '{"function":"${funcName}","Args":[]}'
-  `.replace(/\n\s+/g, ' '); // Unisce il comando su una singola linea
+  `;
 
-  return new Promise((resolve, reject) => {
-    // Esegui il comando all'interno di WSL
-    const wslCommand = `wsl ${command}`;
+  // Ensure that the arguments are handled correctly
+  if (funcName === "registerDataDB") {
+    // Check that the `args` array was received correctly
+    console.log('Args received in invokeChaincode:', args);
+    const paddedArgs = args.concat(Array(6 - args.length).fill("")); // Keep padding to 6 arguments
+    const stringArgs = paddedArgs.map(arg => arg.toString());
+    console.log('Stringified args for registerDataDB:', stringArgs);
+    command += `-c '{"function":"registerDataDB","Args":${JSON.stringify(stringArgs)}}'`;
+  } else if (funcName === "aggregateData") {
+    command += `-c '{"function":"aggregateData","Args":[]}'`;
+  } else {
+    throw new Error(`Unknown function: ${funcName}`);
+  }
 
-    exec(wslCommand, { env: process.env }, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`Error executing command: ${error}`);
-        reject(error);
-      } else {
-        console.log(`stdout: ${stdout}`);
-        if (stderr) console.error(`stderr: ${stderr}`);
-        resolve(stdout);
-      }
-    });
-  });
+  command = command.replace(/\n\s+/g, ' ');
+
+  try {
+    const result = await execWSLCommand(command);
+    return result;
+  } catch (error) {
+    console.error(`Error invoking chaincode function ${funcName}: ${error}`);
+    throw error;
+  }
+}
+
+function startSimulation() {
+  if (isSimulationRunning) {
+    console.log('Simulation is already running.');
+    return;
+  }
+
+  console.log('Starting simulation...');
+  isSimulationRunning = true; // Set the simulation status to running
+
+  // Call invokeChaincode with registerDataDB immediately
+  invokeChaincode('registerDataDB')
+
+  // Call invokeChaincode with registerDataDB every 30 seconds
+  simulationInterval1 = setInterval(() => {
+    console.log('Calling registerDataDB...');
+    invokeChaincode('registerDataDB')
+  }, 30000);
+
+  // Call invokeChaincode with aggregateData every 5 minutes
+  simulationInterval2 = setInterval(() => {
+    console.log('Calling aggregateData...');
+    invokeChaincode('aggregateData')
+  }, 300000); // 5 minutes in milliseconds
+
+  // Stop simulation after 30 minutes
+  simulationTimeout = setTimeout(() => {
+    console.log('Stopping simulation after 30 minutes...');
+    stopSimulation();
+  }, 1800000); // 30 minutes in milliseconds
+}
+
+function stopSimulation() {
+  if (!isSimulationRunning) {
+    console.log('No simulation is currently running.');
+    return;
+  }
+
+  console.log('Stopping simulation...');
+  // Clear intervals and timeout
+  if (simulationInterval1) {
+    clearInterval(simulationInterval1);
+    console.log('Cleared registerDataDB interval.');
+  }
+  if (simulationInterval2) {
+    clearInterval(simulationInterval2);
+    console.log('Cleared aggregateData interval.');
+  }
+  if (simulationTimeout) {
+    clearTimeout(simulationTimeout);
+    console.log('Cleared simulation timeout.');
+  }
+
+  isSimulationRunning = false; // Set the simulation status to not running
+
+  // Optionally, you can add logic to terminate any ongoing simulation processes here
+}
+
+app.on('ready', createWindow);
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    console.log('All windows are closed. Exiting application.');
+    app.quit();
+  }
+});
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    console.log('Recreating window.');
+    createWindow();
+  }
+});
+
+// Modify the IPC handler to accept arguments
+ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
+  console.log(`Invoking chaincode function: ${funcName} with args:`, args);
+
+  // Check if args are indeed an array and not undefined
+  if (!Array.isArray(args) || args.length === 0) {
+    console.error("Args not passed correctly. Received args:", args);
+  } else {
+    console.log("Args passed correctly:", args);
+  }
+  try {
+    const result = await invokeChaincode(funcName, args);
+    return result;
+  } catch (error) {
+    console.error(`Error handling invoke-chaincode request: ${error}`);
+    throw error;
+  }
+});
+
+ipcMain.handle('start-simulation', async () => {
+  console.log('Received request to start simulation.');
+  startSimulation();
+});
+
+ipcMain.handle('stop-simulation', () => {
+  console.log('Received request to stop simulation.');
+  stopSimulation();
 });
