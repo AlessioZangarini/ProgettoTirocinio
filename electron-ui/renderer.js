@@ -1,5 +1,14 @@
 console.log('renderer.js is loaded');
 
+document.getElementById('initializeUI').addEventListener('click', async () => {
+  console.log('Initialize UI button clicked');
+  try {
+    await window.electronAPI.initializeUI();
+  } catch (error) {
+    console.error('Error initializing UI:', error);
+  }
+});
+
 document.getElementById('startSimulation').addEventListener('click', async () => {
   console.log('Start Simulation button clicked');
   try {
@@ -19,7 +28,7 @@ document.getElementById('stopSimulation').addEventListener('click', async () => 
 });
 
 document.getElementById('saveData').addEventListener('click', async () => {
-  console.log('saveData button clicked');
+  console.log('Save Data button clicked');
 
   // Log each value individually
   const id = document.getElementById('sensor-id').value;
@@ -57,4 +66,15 @@ document.getElementById('aggregateData').addEventListener('click', async () => {
     console.error('Error aggregating data:', error);
   }
 });
+
+document.getElementById('clearDB').addEventListener('click', async () => {
+  console.log('Clear DB button clicked');
+  try {
+    const result = await window.electronAPI.invokeChaincode('deleteDataDB');
+    console.log('Database cleared:', result);
+  } catch (error) {
+    console.error('Error clearing database:', error);
+  }
+});
+
 // to-do: add more listeners

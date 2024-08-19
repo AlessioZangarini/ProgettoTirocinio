@@ -89,6 +89,8 @@ async function invokeChaincode(funcName, args = []) {
     command += `-c '{"function":"registerDataDB","Args":${JSON.stringify(stringArgs)}}'`;
   } else if (funcName === "aggregateData") {
     command += `-c '{"function":"aggregateData","Args":[]}'`;
+  } else if (funcName === "deleteDataDB") {
+    command += `-c '{"function":"deleteDataDB","Args":[]}'`;
   } else {
     throw new Error(`Unknown function: ${funcName}`);
   }
@@ -174,6 +176,41 @@ app.on('activate', () => {
     createWindow();
   }
 });
+
+// Function to send commands to terminal
+async function sendCommandsToTerminal() {
+  console.log('Sending commands to terminal...');
+
+  const commands = [
+    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh up',
+    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh createChannel',
+    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh deployCC -ccn ProgettoTirocinio -ccp /mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/main -ccl javascript'
+  ];
+
+  for (const command of commands) {
+    try {
+      const { stdout, stderr } = await execPromise(`wsl ${command}`);
+      if (stderr) {
+        console.error(`stderr for ${command}:`, stderr);
+      }
+      console.log(`stdout for ${command}:`, stdout);
+    } catch (error) {
+      console.error(`Error executing command ${command}:`, error);
+    }
+  }
+}
+
+
+// Handle IPC calls
+ipcMain.handle('initializeUI', async () => {
+  try {
+    sendCommandsToTerminal();
+  } catch (error) {
+    console.error('Error handling initializeUI request:', error);
+    throw error;
+  }
+});
+
 
 // Modify the IPC handler to accept arguments
 ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
