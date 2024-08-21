@@ -9,9 +9,11 @@ let simulationInterval1 = null;
 let simulationInterval2 = null;
 let simulationTimeout = null;
 let isSimulationRunning = false; // Global variable to track simulation status
+let isAggregatingData = false; // Variable to track data aggregation status
+let mainWindow = null;
 
 function createWindow() {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
     webPreferences: {
@@ -31,14 +33,50 @@ function createWindow() {
   exec(`wsl bash -c "cd '${fabricSamplesPath}' && ls"`, (error, stdout, stderr) => {
     if (error) {
       console.error(`Error executing command: ${error}`);
+      sendOutputToRenderer(`Error executing command: ${error}`);
       return;
     }
     if (stderr) {
       console.error(`stderr: ${stderr}`);
+      sendOutputToRenderer(`stderr: ${stderr}`);
       return;
     }
     console.log(`Directory contents: ${stdout}`);
+    sendOutputToRenderer(`Directory contents: ${stdout}`);
   });
+}
+
+// Function to open the network
+async function openNetwork() {
+  console.log('Opening network...');
+
+  const commands = [
+    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh up',
+    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh createChannel',
+    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh deployCC -ccn ProgettoTirocinio -ccp /mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/main -ccl javascript'
+  ];
+
+  for (const command of commands) {
+    try {
+      const { stdout, stderr } = await execPromise(`wsl ${command}`);
+      if (stderr) {
+        console.error(`stderr for ${command}:`, stderr);
+        sendOutputToRenderer(`stderr for ${command}: ${stderr}`);
+      }
+      console.log(`stdout for ${command}:`, stdout);
+      sendOutputToRenderer(`stdout for ${command}: ${stdout}`);
+    } catch (error) {
+      console.error(`Error executing command ${command}:`, error);
+      sendOutputToRenderer(`Error executing command ${command}: ${error}`);
+    }
+  }
+  sendOutputToRenderer('UI initialized');
+}
+
+function sendOutputToRenderer(output) {
+  if (mainWindow) { 
+    mainWindow.webContents.send('command-output', output);
+  }
 }
 
 function execWSLCommand(command) {
@@ -46,9 +84,13 @@ function execWSLCommand(command) {
     exec(`wsl ${command}`, (error, stdout, stderr) => {
       if (error) {
         console.error(`Error executing WSL command: ${error}`);
+        sendOutputToRenderer(`Error executing WSL command: ${error}`);
         reject(error);
       } else {
-        if (stderr) console.error(`stderr: ${stderr}`);
+        if (stderr) {
+          console.error(`stderr: ${stderr}`);
+          sendOutputToRenderer(`stderr: ${stderr}`);
+        }
         resolve(stdout);
       }
     });
@@ -79,17 +121,16 @@ async function invokeChaincode(funcName, args = []) {
     --tlsRootCertFiles "/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt" 
   `;
 
-  // Ensure that the arguments are handled correctly
   if (funcName === "registerDataDB") {
-    // Check that the `args` array was received correctly
-    console.log('Args received in invokeChaincode:', args);
     const paddedArgs = args.concat(Array(6 - args.length).fill("")); // Keep padding to 6 arguments
     const stringArgs = paddedArgs.map(arg => arg.toString());
-    console.log('Stringified args for registerDataDB:', stringArgs);
+    sendOutputToRenderer('Calling registerDataDB...');
     command += `-c '{"function":"registerDataDB","Args":${JSON.stringify(stringArgs)}}'`;
   } else if (funcName === "aggregateData") {
+    sendOutputToRenderer('Calling aggregateData...');
     command += `-c '{"function":"aggregateData","Args":[]}'`;
   } else if (funcName === "deleteDataDB") {
+    sendOutputToRenderer('Calling deleteDataDB...');
     command += `-c '{"function":"deleteDataDB","Args":[]}'`;
   } else {
     throw new Error(`Unknown function: ${funcName}`);
@@ -99,9 +140,11 @@ async function invokeChaincode(funcName, args = []) {
 
   try {
     const result = await execWSLCommand(command);
+    sendOutputToRenderer(result);
     return result;
   } catch (error) {
     console.error(`Error invoking chaincode function ${funcName}: ${error}`);
+    sendOutputToRenderer(`Error invoking chaincode function ${funcName}: ${error}`);
     throw error;
   }
 }
@@ -109,53 +152,76 @@ async function invokeChaincode(funcName, args = []) {
 function startSimulation() {
   if (isSimulationRunning) {
     console.log('Simulation is already running.');
+    sendOutputToRenderer('Simulation is already running.');
     return;
   }
 
   console.log('Starting simulation...');
+  sendOutputToRenderer('Starting simulation...');
   isSimulationRunning = true; // Set the simulation status to running
 
   // Call invokeChaincode with registerDataDB immediately
-  invokeChaincode('registerDataDB')
+  invokeChaincode('registerDataDB');
 
   // Call invokeChaincode with registerDataDB every 30 seconds
-  simulationInterval1 = setInterval(() => {
+  simulationInterval1 = setInterval(async () => {
     console.log('Calling registerDataDB...');
-    invokeChaincode('registerDataDB')
+    sendOutputToRenderer('Calling registerDataDB...');
+    if (!isAggregatingData) {
+      await invokeChaincode('registerDataDB');
+    } else {
+      console.log('Skipping registerDataDB due to ongoing data aggregation.');
+      sendOutputToRenderer('Skipping registerDataDB due to ongoing data aggregation.');
+    }
   }, 30000);
 
   // Call invokeChaincode with aggregateData every 5 minutes
-  simulationInterval2 = setInterval(() => {
+  simulationInterval2 = setInterval(async () => {
     console.log('Calling aggregateData...');
-    invokeChaincode('aggregateData')
+    sendOutputToRenderer('Calling aggregateData...');
+    if (!isAggregatingData) {
+      isAggregatingData = true;
+      await invokeChaincode('aggregateData');
+      isAggregatingData = false;
+    } else {
+      console.log('Skipping aggregateData due to ongoing data aggregation.');
+      sendOutputToRenderer('Skipping aggregateData due to ongoing data aggregation.');
+    }
   }, 300000); // 5 minutes in milliseconds
 
   // Stop simulation after 30 minutes
   simulationTimeout = setTimeout(() => {
     console.log('Stopping simulation after 30 minutes...');
+    sendOutputToRenderer('Stopping simulation after 30 minutes...');
     stopSimulation();
   }, 1800000); // 30 minutes in milliseconds
 }
 
+
 function stopSimulation() {
   if (!isSimulationRunning) {
     console.log('No simulation is currently running.');
+    sendOutputToRenderer('No simulation is currently running.');
     return;
   }
 
   console.log('Stopping simulation...');
+  sendOutputToRenderer('Stopping simulation...');
   // Clear intervals and timeout
   if (simulationInterval1) {
     clearInterval(simulationInterval1);
     console.log('Cleared registerDataDB interval.');
+    sendOutputToRenderer('Cleared registerDataDB interval.');
   }
   if (simulationInterval2) {
     clearInterval(simulationInterval2);
     console.log('Cleared aggregateData interval.');
+    sendOutputToRenderer('Cleared aggregateData interval.');
   }
   if (simulationTimeout) {
     clearTimeout(simulationTimeout);
     console.log('Cleared simulation timeout.');
+    sendOutputToRenderer('Cleared simulation timeout.');
   }
 
   isSimulationRunning = false; // Set the simulation status to not running
@@ -163,13 +229,36 @@ function stopSimulation() {
   // Optionally, you can add logic to terminate any ongoing simulation processes here
 }
 
+// Function to send commands to terminal
+async function closeNetwork() {
+  console.log('Shutting down network...');
+
+  const command = '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh down';
+
+  try {
+    const { stdout, stderr } = await execPromise(`wsl ${command}`);
+    if (stderr) {
+      console.error(`stderr for ${command}:`, stderr);
+      sendOutputToRenderer(`stderr for ${command}: ${stderr}`);
+    }
+    console.log(`stdout for ${command}:`, stdout);
+    sendOutputToRenderer(`stdout for ${command}: ${stdout}`);
+  } catch (error) {
+    console.error(`Error executing command ${command}:`, error);
+    sendOutputToRenderer(`Error executing command ${command}: ${error}`);
+  }
+}
+
 app.on('ready', createWindow);
-app.on('window-all-closed', () => {
+
+app.on('window-all-closed', async () => {
   if (process.platform !== 'darwin') {
-    console.log('All windows are closed. Exiting application.');
+    console.log('All windows are closed, shutting down network ...');
+    await closeNetwork();
     app.quit();
   }
 });
+
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     console.log('Recreating window.');
@@ -177,66 +266,30 @@ app.on('activate', () => {
   }
 });
 
-// Function to send commands to terminal
-async function sendCommandsToTerminal() {
-  console.log('Sending commands to terminal...');
-
-  const commands = [
-    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh up',
-    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh createChannel',
-    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh deployCC -ccn ProgettoTirocinio -ccp /mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/main -ccl javascript'
-  ];
-
-  for (const command of commands) {
-    try {
-      const { stdout, stderr } = await execPromise(`wsl ${command}`);
-      if (stderr) {
-        console.error(`stderr for ${command}:`, stderr);
-      }
-      console.log(`stdout for ${command}:`, stdout);
-    } catch (error) {
-      console.error(`Error executing command ${command}:`, error);
-    }
-  }
-}
-
-
-// Handle IPC calls
+// Listen to IPC events from the renderer process
 ipcMain.handle('initializeUI', async () => {
-  try {
-    sendCommandsToTerminal();
+  try{
+    sendOutputToRenderer('Initializing UI...');
+    await openNetwork();
+    return `UI initialized`
   } catch (error) {
-    console.error('Error handling initializeUI request:', error);
-    throw error;
+    return `Error invoking chaincode: ${error.message}`;
   }
 });
 
-
-// Modify the IPC handler to accept arguments
-ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
-  console.log(`Invoking chaincode function: ${funcName} with args:`, args);
-
-  // Check if args are indeed an array and not undefined
-  if (!Array.isArray(args) || args.length === 0) {
-    console.error("Args not passed correctly. Received args:", args);
-  } else {
-    console.log("Args passed correctly:", args);
-  }
-  try {
-    const result = await invokeChaincode(funcName, args);
-    return result;
-  } catch (error) {
-    console.error(`Error handling invoke-chaincode request: ${error}`);
-    throw error;
-  }
-});
-
-ipcMain.handle('start-simulation', async () => {
-  console.log('Received request to start simulation.');
+ipcMain.handle('start-simulation', () => {
   startSimulation();
 });
 
 ipcMain.handle('stop-simulation', () => {
-  console.log('Received request to stop simulation.');
   stopSimulation();
+});
+
+ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
+  try {
+    const result = await invokeChaincode(funcName, args);
+    return result;
+  } catch (error) {
+    return `Error invoking chaincode: ${error.message}`;
+  }
 });

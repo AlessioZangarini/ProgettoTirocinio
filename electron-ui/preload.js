@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   invokeChaincode: (funcName, args) => ipcRenderer.invoke('invoke-chaincode', funcName, args),
   startSimulation: () => ipcRenderer.invoke('start-simulation'),
   stopSimulation: () => ipcRenderer.invoke('stop-simulation'),
+  onCommandOutput: (callback) => ipcRenderer.on('command-output', callback)
 });
