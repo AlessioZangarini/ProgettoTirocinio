@@ -7,16 +7,8 @@ const sortKeysRecursive = require('sort-keys-recursive');
 const { MongoClient } = require('mongodb');
 const seedrandom = require('seedrandom');
 
-
 // Edgenode class extends the Fabric Contract class
 class Edgenode extends Contract {
-
-    // Initialize the ledger
-    async InitLedger(ctx) {
-        console.info('=========== Initializing Ledger ===========');
-        //to-do 
-        console.info('=========== Ledger Initialized Successfully ===========');
-    }
 
     // Register data in MongoDB and on the blockchain
     async registerDataDB(ctx, id, build, floor, CO2, PM25, VOCs) {
@@ -183,47 +175,76 @@ class Edgenode extends Contract {
     
     // Aggregate data and verify integrity
     async aggregateData(ctx) {
-        let currentTime = Date.now();
-        let lastAggregation = parseInt((await ctx.stub.getState('LastAggregation')).toString() || '0');
+        try {
+            console.log("Starting aggregateData function");
     
-        // Check if enough time has passed since the last aggregation
-        if (currentTime - lastAggregation < 900 * 1000) {
-            return 'Not enough time has passed to aggregate data';
+            // Retrieve sensor data from the off-chain database
+            const sensorDataArray = await this.getDataDB(ctx);
+            console.log(`Retrieved ${sensorDataArray.length} sensor data entries`);
+            
+            // Check if enough time has passed since the last aggregation
+            if (currentTime - lastAggregation < 900 * 1000) {
+                return 'Not enough time has passed to aggregate data';
+            }
+            
+            let totalCO2 = 0;
+            let totalPM25 = 0;
+            let totalVOCs = 0;
+            let count = 0;
+    
+            // Process each sensor data entry
+            for (const sensorData of sensorDataArray) {
+                try {
+                    totalCO2 += sensorData.CO2;
+                    totalPM25 += sensorData.PM25;
+                    totalVOCs += sensorData.VOCs;
+                    count += 1;
+                } catch (err) {
+                    console.log(`Error processing sensor data: ${err}`);
+                }
+            }
+    
+            console.log(`Processed ${count} valid sensor data entries`);
+    
+            if (count > 0) {
+                // Calculate averages
+                const avgCO2 = totalCO2 / count;
+                const avgPM25 = totalPM25 / count;
+                const avgVOCs = totalVOCs / count;
+    
+                // Use transaction timestamp to ensure determinism
+                const txTimestamp = ctx.stub.getTxTimestamp();
+                const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
+    
+                const aggregatedData = {
+                    avgCO2: avgCO2,
+                    avgPM25: avgPM25,
+                    avgVOCs: avgVOCs,
+                    count: count,
+                    timestamp: timestamp
+                };
+    
+                // Generate a unique ID for this aggregation
+                const aggregationId = `aggregation_${timestamp}`;
+    
+                console.log(`Saving aggregated data with ID: ${aggregationId}`);
+                console.log(`Aggregated data: ${JSON.stringify(aggregatedData)}`);
+    
+                // Save the aggregated data with the unique ID
+                await ctx.stub.putState(aggregationId, Buffer.from(JSON.stringify(aggregatedData)));
+                await this.deleteDataDB(ctx);
+    
+                console.log(`Data aggregated successfully. ID: ${aggregationId}`);
+                return JSON.stringify({ message: "Data aggregated successfully", id: aggregationId });
+            } else {
+                console.log("No data available for aggregation");
+                return JSON.stringify({ error: "No data available for aggregation" });
+            }
+    
+        } catch (error) {
+            console.error(`Error in aggregateData: ${error}`);
+            return JSON.stringify({ error: `Error aggregating data: ${error.message}` });
         }
-    
-        let data = await this.getDataDB(ctx);
-    
-        // Retrieve the stored array of hashes
-        let storedHashes = JSON.parse((await ctx.stub.getState('DataHashes')).toString());
-        console.log('Stored hashes:', storedHashes);
-    
-        // Log the stored Merkle root for debugging
-        let merkleRootStored = (await ctx.stub.getState('MerkleRoot')).toString();
-        console.log(`Stored Merkle Root: ${merkleRootStored}`);
-    
-        // Calculate the Merkle root using the stored hashes
-        let merkleRootCalculated = this.calculateMerkleRoot(storedHashes);
-        console.log(`Calculated Merkle Root: ${merkleRootCalculated}`);
-    
-        // Verify data integrity
-        if (merkleRootStored !== merkleRootCalculated) {
-            throw new Error(`Data integrity compromised. Stored: ${merkleRootStored}, Calculated: ${merkleRootCalculated}`);
-        }
-    
-        // Calculate aggregation
-        let aggregation = this.calculateAggregation(data);
-    
-        // Store aggregation result
-        let json = stringify(sortKeysRecursive(aggregation));
-        await ctx.stub.putState('Aggregation', Buffer.from(json));
-    
-        // Update last aggregation timestamp
-        await ctx.stub.putState('LastAggregation', Buffer.from(String(currentTime)));
-    
-        // Clear data after aggregation
-        await this.deleteDataDB(ctx);
-    
-        return 'Data aggregated';
     }
     
     // Get hashes of all data in the database

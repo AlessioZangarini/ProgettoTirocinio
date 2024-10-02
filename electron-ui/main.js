@@ -5,6 +5,9 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 
 const fabricSamplesPath = '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples';
+const THRESHOLD_CO2 = 1000;
+const THRESHOLD_PM = 10;
+const THRESHOLD_FORMALDEHYDE = 0.1;
 let simulationInterval1 = null;
 let simulationInterval2 = null;
 let simulationTimeout = null;
@@ -79,6 +82,12 @@ function sendOutputToRenderer(output) {
   }
 }
 
+function sendAlertToRenderer(pollutant, value, threshold) {
+  if (mainWindow) {
+    mainWindow.webContents.send('pollutant-alert', { pollutant, value, threshold });
+  }
+}
+
 function execWSLCommand(command) {
   return new Promise((resolve, reject) => {
     exec(`wsl ${command}`, (error, stdout, stderr) => {
@@ -96,6 +105,21 @@ function execWSLCommand(command) {
     });
   });
 }
+
+function checkThreshold(args) {
+  const [, , , co2, pm, formaldehyde] = args.map(Number);
+  
+  if (co2 > THRESHOLD_CO2) {
+    sendAlertToRenderer('CO2', co2, THRESHOLD_CO2);
+  }
+  if (pm > THRESHOLD_PM) {
+    sendAlertToRenderer('PM', pm, THRESHOLD_PM);
+  }
+  if (formaldehyde > THRESHOLD_FORMALDEHYDE) {
+    sendAlertToRenderer('Formaldehyde', formaldehyde, THRESHOLD_FORMALDEHYDE);
+  }
+}
+
 
 async function invokeChaincode(funcName, args = []) {
   console.log(`Invoking chaincode function: ${funcName} with args:`, args);
@@ -126,13 +150,18 @@ async function invokeChaincode(funcName, args = []) {
     const stringArgs = paddedArgs.map(arg => arg.toString());
     sendOutputToRenderer('Calling registerDataDB...');
     command += `-c '{"function":"registerDataDB","Args":${JSON.stringify(stringArgs)}}'`;
+    checkThreshold(args);
   } else if (funcName === "aggregateData") {
     sendOutputToRenderer('Calling aggregateData...');
     command += `-c '{"function":"aggregateData","Args":[]}'`;
   } else if (funcName === "deleteDataDB") {
     sendOutputToRenderer('Calling deleteDataDB...');
     command += `-c '{"function":"deleteDataDB","Args":[]}'`;
-  } else {
+  } else if (funcName === "viewCommittedBlocks") {
+    sendOutputToRenderer('Calling queryAggregatedData...');
+    command += `-c '{"function":"Validator:queryAggregatedData","Args":[]}'`;
+  } 
+  else {
     throw new Error(`Unknown function: ${funcName}`);
   }
 
@@ -141,11 +170,34 @@ async function invokeChaincode(funcName, args = []) {
   try {
     const result = await execWSLCommand(command);
     sendOutputToRenderer(result);
+    sendOutputToRenderer(`Function ${funcName} invoked succesfully`);
     return result;
   } catch (error) {
     console.error(`Error invoking chaincode function ${funcName}: ${error}`);
     sendOutputToRenderer(`Error invoking chaincode function ${funcName}: ${error}`);
     throw error;
+  }
+}
+
+async function invokeWithRetry(funcName, args, maxRetries = 3, initialDelay = 1000) {
+  let retries = 0;
+  while (retries < maxRetries) {
+    try {
+      const result = await invokeChaincode(funcName, args);
+      return result;
+    } catch (error) {
+      if (error.message.includes('could not assemble transaction: ProposalResponsePayloads do not match')) {
+        retries++;
+        if (retries >= maxRetries) {
+          throw error;
+        }
+        const delay = initialDelay * Math.pow(2, retries);
+        console.log(`Retry attempt ${retries} for ${funcName} after ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        throw error;
+      }
+    }
   }
 }
 
@@ -166,7 +218,7 @@ function startSimulation() {
   // Call invokeChaincode with registerDataDB every 30 seconds
   simulationInterval1 = setInterval(async () => {
     console.log('Calling registerDataDB...');
-    sendOutputToRenderer('Calling registerDataDB...');
+    //sendOutputToRenderer('Calling registerDataDB...');
     if (!isAggregatingData) {
       await invokeChaincode('registerDataDB');
     } else {
@@ -178,10 +230,10 @@ function startSimulation() {
   // Call invokeChaincode with aggregateData every 5 minutes
   simulationInterval2 = setInterval(async () => {
     console.log('Calling aggregateData...');
-    sendOutputToRenderer('Calling aggregateData...');
+    //sendOutputToRenderer('Calling aggregateData...');
     if (!isAggregatingData) {
       isAggregatingData = true;
-      await invokeChaincode('aggregateData');
+      await invokeWithRetry('aggregateData');
       isAggregatingData = false;
     } else {
       console.log('Skipping aggregateData due to ongoing data aggregation.');
