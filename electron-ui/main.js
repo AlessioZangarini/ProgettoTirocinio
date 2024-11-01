@@ -1,38 +1,79 @@
+// Main application file for IoT Environment Simulation using Hyperledger Fabric
+// Manages sensor data collection, network operations, and chaincode interactions
+
+// Import required dependencies for Electron and Node.js functionality
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
 const util = require('util');
-const execPromise = util.promisify(exec);
+const execPromise = util.promisify(exec);  // Convert exec to use promises
+const fs = require('fs');
 
+// Base path for Fabric samples and network configuration
 const fabricSamplesPath = '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples';
-const THRESHOLD_CO2 = 1000;
-const THRESHOLD_PM = 10;
-const THRESHOLD_FORMALDEHYDE = 0.1;
-let simulationInterval1 = null;
-let simulationInterval2 = null;
-let simulationTimeout = null;
-let isSimulationRunning = false; // Global variable to track simulation status
-let isAggregatingData = false; // Variable to track data aggregation status
-let mainWindow = null;
 
+// Helper function to convert Windows paths to WSL (Windows Subsystem for Linux) compatible paths
+function toWSLPath(windowsPath) {
+  return windowsPath
+    .replace(/\\/g, '/')  // Replace Windows backslashes with forward slashes
+    .replace(/^([A-Za-z]):/, (_, letter) => `/mnt/${letter.toLowerCase()}`);  // Convert drive letter to WSL format
+}
+
+// Helper function to ensure directory exists, creates if not
+async function ensureDirectoryExists(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+// Define paths for organization keys and certificates
+const orgPaths = {
+  org1: {
+    certPath: `${fabricSamplesPath}/test-network/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp/signcerts/peer0.org1.example.com-cert.pem`,
+    keyPath: `${fabricSamplesPath}/test-network/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp/keystore`
+  },
+  org2: {
+    certPath: `${fabricSamplesPath}/test-network/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp/signcerts/peer0.org2.example.com-cert.pem`,
+    keyPath: `${fabricSamplesPath}/test-network/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp/keystore`
+  }
+};
+
+
+// Environmental thresholds for air quality monitoring
+const THRESHOLD_CO2 = 1000;      // CO2 threshold in ppm
+const THRESHOLD_PM = 10;         // Particulate Matter threshold in µg/m³
+const THRESHOLD_FORMALDEHYDE = 0.1; // Formaldehyde threshold in ppm
+
+// Global variables for simulation control
+let simulationInterval1 = null;  // Interval for regular data registration
+let simulationInterval2 = null;  // Interval for data aggregation
+let simulationTimeout = null;    // Timeout for simulation duration
+let isSimulationRunning = false; // Flag to track simulation status
+let isAggregatingData = false;   // Flag to prevent concurrent aggregation
+let mainWindow = null;           // Main application window reference
+
+// Create and configure the main application window
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
-      contextIsolation: true,
+      nodeIntegration: false,  // Disable direct Node.js integration for security
+      contextIsolation: true,  // Enable context isolation for security
       enableBlinkFeatures: 'AutofillFeaturePolicy'
     }
   });
 
+  // Load the main HTML file
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
+  // Handle window close event
   mainWindow.on('closed', function() {
     mainWindow = null;
   });
 
+  // Initial directory check in WSL environment
   exec(`wsl bash -c "cd '${fabricSamplesPath}' && ls"`, (error, stdout, stderr) => {
     if (error) {
       console.error(`Error executing command: ${error}`);
@@ -45,49 +86,198 @@ function createWindow() {
       return;
     }
     console.log(`Directory contents: ${stdout}`);
-    sendOutputToRenderer(`Directory contents: ${stdout}`);
   });
 }
 
-// Function to open the network
-async function openNetwork() {
-  console.log('Opening network...');
+// Verify OpenSSL installation in WSL environment
+// OpenSSL is required for cryptographic operations
+async function checkOpenSSL() {
+  try {
+    console.log("Checking OpenSSL installation in WSL...");
+    const { stdout, stderr } = await execPromise('wsl openssl version');
+    if (stderr) {
+      console.error(`Error checking OpenSSL: ${stderr}`);
+      return false;
+    }
+    console.log(`OpenSSL version: ${stdout.trim()}`);
+    return true;
+  } catch (error) {
+    console.error("OpenSSL is not installed or not accessible in WSL:", error.message);
+    return false;
+  }
+}
 
+// Read organization certificates from WSL environment
+async function readCertFromWSL(org) {
+  const certPath = orgPaths[org].certPath;
+  const wslCertPath = toWSLPath(certPath);
+
+  try {
+    console.log(`Reading certificate for ${org} from path: ${wslCertPath}`);
+    const command = `wsl cat "${wslCertPath}"`;
+    const { stdout, stderr } = await execPromise(command);
+    
+    if (stderr) {
+      throw new Error(`Error reading cert for ${org}: ${stderr}`);
+    }
+
+    // Verify certificate format
+    if (!stdout.includes('BEGIN CERTIFICATE') || !stdout.includes('END CERTIFICATE')) {
+      throw new Error(`Invalid certificate format for ${org}`);
+    }
+
+    console.log(`Successfully read signing certificate for ${org}`);
+    console.log(`Certificate content starts with: ${stdout.substring(0, 64)}...`);
+    
+    return stdout.trim();
+
+  } catch (error) {
+    console.error(`Error reading cert for ${org}:`, error);
+    throw new Error(`Certificate reading failed for ${org}: ${error.message}`);
+  }
+}
+
+// Read organization private keys from WSL environment
+async function readKeyFromWSL(org) {
+  const keyDirPath = toWSLPath(orgPaths[org].keyPath);
+
+  try {
+    // First, list files in the keystore directory to find the private key
+    console.log(`Reading key directory for ${org} from path: ${keyDirPath}`);
+    const { stdout: fileList } = await execPromise(`wsl ls "${keyDirPath}"`);
+    
+    // Get the first file that ends with _sk (private key)
+    const keyFileName = fileList.split('\n').find(file => file.endsWith('_sk'));
+    if (!keyFileName) {
+      throw new Error(`No private key file found for ${org}`);
+    }
+
+    // Read the private key file
+    const fullKeyPath = `${keyDirPath}/${keyFileName}`;
+    console.log(`Reading private key for ${org} from path: ${fullKeyPath}`);
+    const { stdout, stderr } = await execPromise(`wsl cat "${fullKeyPath}"`);
+    
+    if (stderr) {
+      throw new Error(`Error reading key for ${org}: ${stderr}`);
+    }
+
+    // Verify key format
+    if (!stdout.includes('BEGIN PRIVATE KEY') && !stdout.includes('BEGIN EC PRIVATE KEY')) {
+      console.log(`Adding PEM headers for ${org}'s key`);
+      // Add PEM format if not present
+      return `-----BEGIN PRIVATE KEY-----\n${stdout.trim()}\n-----END PRIVATE KEY-----`;
+    }
+
+    console.log(`Successfully read private key for ${org}`);
+    console.log(`Key content starts with: ${stdout.substring(0, 64)}...`);
+    
+    return stdout.trim();
+
+  } catch (error) {
+    console.error(`Error reading key for ${org}:`, error);
+    throw new Error(`Key reading failed for ${org}: ${error.message}`);
+  }
+}
+
+
+// Prepare PEM formatted keys and certificates for both organizations
+const preparePemKeysAndCerts = async () => {
+  const orgKeysAndCerts = {};
+  try {
+    // Process keys and certificates for both organizations
+    for (const org of ['org1', 'org2']) {
+      let key = await readKeyFromWSL(org);
+      let cert = await readCertFromWSL(org);
+      
+      // Normalize line endings for both key and certificate
+      key = key
+        .replace(/\\n/g, '\n')  // Convert literal \n to newlines
+        .replace(/\r\n/g, '\n') // Normalize CRLF to LF
+        .replace(/\n+/g, '\n')  // Remove multiple empty lines
+        .trim();
+
+      cert = cert
+        .replace(/\\n/g, '\n')
+        .replace(/\r\n/g, '\n')
+        .replace(/\n+/g, '\n')
+        .trim();
+
+      orgKeysAndCerts[org] = { 
+        key: key,
+        cert: cert 
+      };
+    }
+    return orgKeysAndCerts;
+  } catch (error) {
+    console.error('Error preparing PEM keys and certs:', error);
+    throw error;
+  }
+};
+
+// Initialize the Hyperledger Fabric network
+async function openNetwork() {
+  // Network initialization commands
   const commands = [
+    // Start the network
     '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh up',
+    // Create the channel
     '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh createChannel',
+    // Deploy the chaincode
     '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh deployCC -ccn ProgettoTirocinio -ccp /mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/main -ccl javascript'
   ];
 
-  for (const command of commands) {
+  // Execute each command sequentially
+  for (let i = 0; i < commands.length; i++) {
+    const command = commands[i];
     try {
+      // Send appropriate status messages
+      if(i==0) {
+        sendOutputToRenderer(`Opening network...`);
+      }
+      else if(i==1) {
+        sendOutputToRenderer(`Creating channel...`);
+      }
+      else if (i==2) {
+        sendOutputToRenderer(`Deploying chaincode to channel... this may take a while`);
+      }
+
+      sendOutputToRenderer(`Executing command ${i + 1} of ${commands.length}: ${command}`);
       const { stdout, stderr } = await execPromise(`wsl ${command}`);
+      
       if (stderr) {
         console.error(`stderr for ${command}:`, stderr);
         sendOutputToRenderer(`stderr for ${command}: ${stderr}`);
       }
+      
       console.log(`stdout for ${command}:`, stdout);
       sendOutputToRenderer(`stdout for ${command}: ${stdout}`);
+      
     } catch (error) {
       console.error(`Error executing command ${command}:`, error);
       sendOutputToRenderer(`Error executing command ${command}: ${error}`);
+      
+      sendOutputToRenderer('Network initialization failed. Please check the error and try again.');
+      return;
     }
   }
-  sendOutputToRenderer('UI initialized');
+  sendOutputToRenderer('All commands executed successfully. Ledger initialized.');
 }
 
+// Send output messages to the renderer process
 function sendOutputToRenderer(output) {
   if (mainWindow) { 
     mainWindow.webContents.send('command-output', output);
   }
 }
 
+// Send alerts when pollutant thresholds are exceeded
 function sendAlertToRenderer(pollutant, value, threshold) {
   if (mainWindow) {
     mainWindow.webContents.send('pollutant-alert', { pollutant, value, threshold });
   }
 }
 
+// Execute WSL commands with promise wrapper
 function execWSLCommand(command) {
   return new Promise((resolve, reject) => {
     exec(`wsl ${command}`, (error, stdout, stderr) => {
@@ -106,9 +296,11 @@ function execWSLCommand(command) {
   });
 }
 
+// Check if pollutant values exceed thresholds
 function checkThreshold(args) {
   const [, , , co2, pm, formaldehyde] = args.map(Number);
   
+  // Check each pollutant against its threshold
   if (co2 > THRESHOLD_CO2) {
     sendAlertToRenderer('CO2', co2, THRESHOLD_CO2);
   }
@@ -120,10 +312,12 @@ function checkThreshold(args) {
   }
 }
 
-
+// Main function to invoke chaincode operations
+// Handles different chaincode functions with appropriate configurations and parameters
 async function invokeChaincode(funcName, args = []) {
   console.log(`Invoking chaincode function: ${funcName} with args:`, args);
 
+  // Base command string with all necessary environment variables and peer configurations
   let command = `
     PATH=/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/bin
     FABRIC_CFG_PATH=/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/config 
@@ -145,32 +339,69 @@ async function invokeChaincode(funcName, args = []) {
     --tlsRootCertFiles "/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt" 
   `;
 
-  if (funcName === "registerDataDB") {
-    const paddedArgs = args.concat(Array(6 - args.length).fill("")); // Keep padding to 6 arguments
+  // Handle different chaincode functions
+  if (funcName === "ValidateData") {
+    try {
+      // Prepare organization keys and certificates for validation
+      const orgKeysAndCerts = await preparePemKeysAndCerts();
+
+      // Verify both organizations' credentials are available
+      if (!orgKeysAndCerts.org1 || !orgKeysAndCerts.org2) {
+        throw new Error("Failed to read organization keys and certs");
+      }
+
+      // Encode credentials in base64 for transmission
+      const key1 = Buffer.from(orgKeysAndCerts.org1.key).toString('base64');
+      const cert1 = Buffer.from(orgKeysAndCerts.org1.cert).toString('base64');
+      const key2 = Buffer.from(orgKeysAndCerts.org2.key).toString('base64');
+      const cert2 = Buffer.from(orgKeysAndCerts.org2.cert).toString('base64');
+
+      // Prepare the validation command with encoded credentials
+      const jsonCommand = {
+        function: "Validator:ValidateData",
+        Args: [key1, cert1, key2, cert2]
+      };
+      sendOutputToRenderer('Calling ValidateData...');
+      command += `-c '${JSON.stringify(jsonCommand)}'`;
+
+    } catch (error) {
+      throw new Error(`Error preparing command with private keys and certs: ${error.message}`);
+    }
+  } 
+  // Handle data registration function
+  else if (funcName === "registerDataDB") {
+    // Pad arguments array to ensure correct number of parameters
+    const paddedArgs = args.concat(Array(6 - args.length).fill("")); 
     const stringArgs = paddedArgs.map(arg => arg.toString());
     sendOutputToRenderer('Calling registerDataDB...');
     command += `-c '{"function":"registerDataDB","Args":${JSON.stringify(stringArgs)}}'`;
+    // Check if any environmental thresholds are exceeded
     checkThreshold(args);
-  } else if (funcName === "aggregateData") {
+  } 
+  // Handle data aggregation function
+  else if (funcName === "aggregateData") {
     sendOutputToRenderer('Calling aggregateData...');
     command += `-c '{"function":"aggregateData","Args":[]}'`;
-  } else if (funcName === "deleteDataDB") {
+  } 
+  // Handle database cleanup function
+  else if (funcName === "deleteDataDB") {
     sendOutputToRenderer('Calling deleteDataDB...');
     command += `-c '{"function":"deleteDataDB","Args":[]}'`;
-  } else if (funcName === "viewCommittedBlocks") {
+  } 
+  // Handle block query function
+  else if (funcName === "viewCommittedBlocks") {
     sendOutputToRenderer('Calling queryAggregatedData...');
     command += `-c '{"function":"Validator:queryAggregatedData","Args":[]}'`;
-  } 
-  else {
-    throw new Error(`Unknown function: ${funcName}`);
   }
 
+  // Clean up command string by removing newlines and extra spaces
   command = command.replace(/\n\s+/g, ' ');
 
   try {
+    // Execute the prepared command in WSL
     const result = await execWSLCommand(command);
     sendOutputToRenderer(result);
-    sendOutputToRenderer(`Function ${funcName} invoked succesfully`);
+    sendOutputToRenderer(`Function ${funcName} invoked successfully`);
     return result;
   } catch (error) {
     console.error(`Error invoking chaincode function ${funcName}: ${error}`);
@@ -179,29 +410,36 @@ async function invokeChaincode(funcName, args = []) {
   }
 }
 
+// Retry mechanism for chaincode invocation with exponential backoff
 async function invokeWithRetry(funcName, args, maxRetries = 3, initialDelay = 1000) {
   let retries = 0;
   while (retries < maxRetries) {
     try {
+      // Attempt to invoke the chaincode
       const result = await invokeChaincode(funcName, args);
       return result;
     } catch (error) {
+      // Only retry for specific transaction assembly errors
       if (error.message.includes('could not assemble transaction: ProposalResponsePayloads do not match')) {
         retries++;
         if (retries >= maxRetries) {
           throw error;
         }
+        // Calculate exponential backoff delay
         const delay = initialDelay * Math.pow(2, retries);
         console.log(`Retry attempt ${retries} for ${funcName} after ${delay}ms`);
         await new Promise(resolve => setTimeout(resolve, delay));
       } else {
+        // For other errors, throw immediately
         throw error;
       }
     }
   }
 }
 
+// Start the IoT data simulation process
 function startSimulation() {
+  // Check if simulation is already running
   if (isSimulationRunning) {
     console.log('Simulation is already running.');
     sendOutputToRenderer('Simulation is already running.');
@@ -210,15 +448,14 @@ function startSimulation() {
 
   console.log('Starting simulation...');
   sendOutputToRenderer('Starting simulation...');
-  isSimulationRunning = true; // Set the simulation status to running
+  isSimulationRunning = true;
 
-  // Call invokeChaincode with registerDataDB immediately
+  // Initial data registration
   invokeChaincode('registerDataDB');
 
-  // Call invokeChaincode with registerDataDB every 30 seconds
+  // Set up periodic data registration (every 30 seconds)
   simulationInterval1 = setInterval(async () => {
     console.log('Calling registerDataDB...');
-    //sendOutputToRenderer('Calling registerDataDB...');
     if (!isAggregatingData) {
       await invokeChaincode('registerDataDB');
     } else {
@@ -227,10 +464,9 @@ function startSimulation() {
     }
   }, 30000);
 
-  // Call invokeChaincode with aggregateData every 5 minutes
+  // Set up periodic data aggregation (every 5 minutes)
   simulationInterval2 = setInterval(async () => {
     console.log('Calling aggregateData...');
-    //sendOutputToRenderer('Calling aggregateData...');
     if (!isAggregatingData) {
       isAggregatingData = true;
       await invokeWithRetry('aggregateData');
@@ -241,7 +477,7 @@ function startSimulation() {
     }
   }, 300000); // 5 minutes in milliseconds
 
-  // Stop simulation after 30 minutes
+  // Set simulation timeout (30 minutes)
   simulationTimeout = setTimeout(() => {
     console.log('Stopping simulation after 30 minutes...');
     sendOutputToRenderer('Stopping simulation after 30 minutes...');
@@ -249,8 +485,9 @@ function startSimulation() {
   }, 1800000); // 30 minutes in milliseconds
 }
 
-
+// Stop the IoT data simulation
 function stopSimulation() {
+  // Check if simulation is running
   if (!isSimulationRunning) {
     console.log('No simulation is currently running.');
     sendOutputToRenderer('No simulation is currently running.');
@@ -259,7 +496,8 @@ function stopSimulation() {
 
   console.log('Stopping simulation...');
   sendOutputToRenderer('Stopping simulation...');
-  // Clear intervals and timeout
+  
+  // Clear all intervals and timeouts
   if (simulationInterval1) {
     clearInterval(simulationInterval1);
     console.log('Cleared registerDataDB interval.');
@@ -276,18 +514,18 @@ function stopSimulation() {
     sendOutputToRenderer('Cleared simulation timeout.');
   }
 
-  isSimulationRunning = false; // Set the simulation status to not running
-
-  // Optionally, you can add logic to terminate any ongoing simulation processes here
+  isSimulationRunning = false;
 }
 
-// Function to send commands to terminal
+// Shut down the Hyperledger Fabric network
 async function closeNetwork() {
   console.log('Shutting down network...');
 
+  // Command to shut down the network
   const command = '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh down';
 
   try {
+    // Execute network shutdown command
     const { stdout, stderr } = await execPromise(`wsl ${command}`);
     if (stderr) {
       console.error(`stderr for ${command}:`, stderr);
@@ -301,8 +539,11 @@ async function closeNetwork() {
   }
 }
 
+// Electron app lifecycle event handlers
+// Initialize the application when ready
 app.on('ready', createWindow);
 
+// Handle application shutdown
 app.on('window-all-closed', async () => {
   if (process.platform !== 'darwin') {
     console.log('All windows are closed, shutting down network ...');
@@ -311,6 +552,7 @@ app.on('window-all-closed', async () => {
   }
 });
 
+// Handle application activation
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     console.log('Recreating window.');
@@ -318,25 +560,29 @@ app.on('activate', () => {
   }
 });
 
-// Listen to IPC events from the renderer process
-ipcMain.handle('initializeUI', async () => {
+// IPC (Inter-Process Communication) event handlers
+// Handle ledger initialization request from renderer
+ipcMain.handle('initializeLedger', async () => {
   try{
-    sendOutputToRenderer('Initializing UI...');
+    sendOutputToRenderer('Initializing Ledger...');
     await openNetwork();
-    return `UI initialized`
+    return `Chaincode deployed`;
   } catch (error) {
     return `Error invoking chaincode: ${error.message}`;
   }
 });
 
+// Handle simulation start request from renderer
 ipcMain.handle('start-simulation', () => {
   startSimulation();
 });
 
+// Handle simulation stop request from renderer
 ipcMain.handle('stop-simulation', () => {
   stopSimulation();
 });
 
+// Handle chaincode invocation requests from renderer
 ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
   try {
     const result = await invokeChaincode(funcName, args);

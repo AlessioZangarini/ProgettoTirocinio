@@ -1,151 +1,177 @@
-console.log('renderer.js is loaded');
+let terminal;
 
-function appendToTerminal(text) {
-  const terminal = document.getElementById('terminal');
-  terminal.textContent += text + '\n'; // Append text with a new line
-  terminal.scrollTop = terminal.scrollHeight; // Scroll to the bottom
-}
-
-window.electronAPI.onCommandOutput((event, output) => {
-  appendToTerminal(output);
-});
-
-window.electronAPI.onPollutantAlert((_event, { pollutant, value, threshold }) => {
-  const alertMessage = `Alert: ${pollutant} level (${value}) has exceeded the critical threshold (${threshold})!`;
-  alert(alertMessage);  // Puoi sostituire questo con una UI più sofisticata
-  console.log(alertMessage);
-});
-
-document.getElementById('initializeUI').addEventListener('click', async () => {
-  console.log('Initialize UI button clicked');
-  try {
-    const result = await window.electronAPI.initializeUI();
-    appendToTerminal(result);
-  } catch (error) {
-    console.error('Error initializing UI:', error);
-    appendToTerminal(`Error initializing UI: ${error.message}`);
+const sensorIds = {
+  Building_1: {
+      '1st floor': ['M01', 'M02', 'M03'],
+      '2nd floor': ['M04', 'M05', 'M06'],
+      '3rd floor': ['M07', 'M08'],
+      '4th floor': ['X09', 'X10', 'X11']
+  },
+  Building_2: {
+      '1st floor': ['Y01', 'Y02', 'Y03'],
+      '2nd floor': ['Y04', 'Y05', 'Y06'],
+      '3rd floor': ['Y07', 'Y08', 'Y09']
+  },
+  Building_3: {
+      '1st floor': ['U01', 'U02', 'U03'],
+      '2nd floor': ['U04', 'U05', 'U06']
+  },
+  Building_4: {
+      '1st floor': ['P01', 'P02', 'P03'],
+      '2nd floor': ['P04', 'P05', 'P06'],
+      '3rd floor': ['P07', 'P08', 'P09']
   }
-});
+};
 
-document.getElementById('startSimulation').addEventListener('click', async () => {
-  console.log('Start Simulation button clicked');
-  try {
-    await window.electronAPI.startSimulation();
-    appendToTerminal('Simulation started');
-  } catch (error) {
-    console.error('Error starting simulation:', error);
-    appendToTerminal(`Error starting simulation: ${error.message}`);
-  }
-});
-
-document.getElementById('stopSimulation').addEventListener('click', async () => {
-  console.log('Stop Simulation button clicked');
-  try {
-    await window.electronAPI.stopSimulation();
-    appendToTerminal('Simulation stopped');
-  } catch (error) {
-    console.error('Error stopping simulation:', error);
-    appendToTerminal(`Error stopping simulation: ${error.message}`);
-  }
-});
-
-document.addEventListener('DOMContentLoaded', () => {
-  const inputFields = ['sensor-id', 'building', 'location', 'co2', 'form', 'pm'];
-  
-  inputFields.forEach(id => {
-    const input = document.getElementById(id);
-    input.addEventListener('focus', () => {
-      console.log(`${id} focused`);
-    });
-    input.addEventListener('input', () => {
-      console.log(`${id} value changed to: ${input.value}`);
-    });
+document.querySelectorAll('.numeric-input').forEach(input => {
+  input.addEventListener('input', function(e) {
+    this.value = this.value.replace(/[^0-9.]/g, '');
+    if(this.value.split('.').length > 2) 
+      this.value = this.value.replace(/\.+$/, "");
   });
 });
 
-document.getElementById('saveData').addEventListener('click', async () => {
-  console.log('Save Data button clicked');
-  
-  const inputFields = {
-    id: document.getElementById('sensor-id'),
-    build: document.getElementById('building'),
-    floor: document.getElementById('location'),
-    CO2: document.getElementById('co2'),
-    VOCs: document.getElementById('form'),
-    PM25: document.getElementById('pm')
-  };
+document.addEventListener('DOMContentLoaded', () => {
+  terminal = document.getElementById('terminal');
 
-  const args = Object.values(inputFields).map(input => input.value);
-  console.log('Arguments to be sent:', args);
+  const buildingSelect = document.getElementById('building');
+  const floorSelect = document.getElementById('location');
+  const sensorSelect = document.getElementById('sensor-id');
 
-  try {
+  // Event listener for building selection
+  buildingSelect.addEventListener('change', (event) => {
+      const selectedBuilding = event.target.value;
+      populateFloorDropdown(selectedBuilding);
+      floorSelect.disabled = false;
+      sensorSelect.disabled = true;
+      sensorSelect.innerHTML = '<option value="" disabled selected>Select a sensor ID</option>';
+  });
+
+  // Event listener for floor selection
+  floorSelect.addEventListener('change', (event) => {
+      const selectedBuilding = buildingSelect.value;
+      const selectedFloor = event.target.value;
+      populateSensorDropdown(selectedBuilding, selectedFloor);
+      sensorSelect.disabled = false;
+  });
+
+  // Initialize Ledger button
+  document.getElementById('initializeLedger').addEventListener('click', async () => {
+    const result = await window.electronAPI.initializeLedger();
+    appendToTerminal(result);
+  });
+
+  // Save Data on DB button
+  document.getElementById('saveData').addEventListener('click', async () => {
+    const building = document.getElementById('building').value;
+    const location = document.getElementById('location').value;
+    const sensorId = document.getElementById('sensor-id').value;
+    const co2 = document.getElementById('co2').value;
+    const form = document.getElementById('form').value;
+    const pm = document.getElementById('pm').value;
+
+    const args = [building, location, sensorId, co2, form, pm];
     const result = await window.electronAPI.invokeChaincode('registerDataDB', args);
-    appendToTerminal('Data registered ' + result);
-    
-    // Delay clearing the fields slightly
-    setTimeout(() => {
-      Object.values(inputFields).forEach(input => {
-        input.value = '';
-        input.removeAttribute('readonly');  // Ensure the field is not readonly
-        input.removeAttribute('disabled');  // Ensure the field is not disabled
-      });
-      appendToTerminal('Input fields cleared for next entry');
-      showConfirmation('Data saved and fields cleared!');
-    }, 100);  // 100ms delay
+    appendToTerminal(result);
+  });
 
-  } catch (error) {
-    console.error('Error registering data:', error);
-    appendToTerminal(`Error registering data: ${error.message}`);
-  }
+  // Aggregate Data button
+  document.getElementById('aggregateData').addEventListener('click', async () => {
+    const result = await window.electronAPI.invokeChaincode('aggregateData');
+    appendToTerminal(result);
+  });
+
+  // Start Simulation button
+  document.getElementById('startSimulation').addEventListener('click', () => {
+    window.electronAPI.startSimulation();
+    appendToTerminal('Simulation started');
+  });
+
+  // Stop Simulation button
+  document.getElementById('stopSimulation').addEventListener('click', () => {
+    window.electronAPI.stopSimulation();
+    appendToTerminal('Simulation stopped');
+  });
+
+  // View Committed Blocks button
+  document.getElementById('viewCommittedBlocks').addEventListener('click', async () => {
+    const result = await window.electronAPI.invokeChaincode('viewCommittedBlocks');
+    appendToTerminal(result);
+  });
+
+  // Validate Committed Blocks button
+  document.getElementById('validateCommittedBlocks').addEventListener('click', async () => {
+    const result = await window.electronAPI.invokeChaincode('ValidateData');
+    appendToTerminal(result);
+  });
+
+  // Clear DB button
+  document.getElementById('clearDB').addEventListener('click', async () => {
+    const result = await window.electronAPI.invokeChaincode('deleteDataDB');
+    appendToTerminal(result);
+  });
+
+  // Delete Ledger button
+  document.getElementById('deleteLedger').addEventListener('click', async () => {
+    const result = await window.electronAPI.closeNetwork();
+    appendToTerminal(result);
+  });
+
+  // Listen for command output from main process
+  window.electronAPI.onCommandOutput((event, output) => {
+    appendToTerminal(output);
+  });
+
+  // Listen for pollutant alerts from main process
+  window.electronAPI.onPollutantAlert((event, { pollutant, value, threshold }) => {
+    const alertMessage = `ALERT: ${pollutant} level (${value}) exceeded threshold (${threshold})`;
+    appendToTerminal(alertMessage, 'alert');
+  });
 });
 
-function showConfirmation(message) {
-  const confirmation = document.createElement('div');
-  confirmation.textContent = message;
-  confirmation.style.position = 'fixed';
-  confirmation.style.top = '10px';
-  confirmation.style.right = '10px';
-  confirmation.style.padding = '10px';
-  confirmation.style.backgroundColor = '#4CAF50';
-  confirmation.style.color = 'white';
-  confirmation.style.borderRadius = '5px';
-  document.body.appendChild(confirmation);
-
-  setTimeout(() => {
-    document.body.removeChild(confirmation);
-  }, 3000);  // Remove after 3 seconds
+function populateFloorDropdown(selectedBuilding) {
+    const floorSelect = document.getElementById('location');
+    floorSelect.innerHTML = '<option value="" disabled selected>Select a floor</option>';
+    
+    const floors = Object.keys(sensorIds[selectedBuilding]);
+    floors.forEach(floor => {
+        const option = document.createElement('option');
+        option.value = floor;
+        option.textContent = floor;
+        floorSelect.appendChild(option);
+    });
 }
 
-document.getElementById('aggregateData').addEventListener('click', async () => {
-  console.log('Clicked Aggregate Data button');
-  try {
-    const result = await window.electronAPI.invokeChaincode('aggregateData');
-    appendToTerminal('Data aggregated ' + result);
-  } catch (error) {
-    console.error('Error aggregating data:', error);
-    appendToTerminal(`Error aggregating data: ${error.message}`);
-  }
-});
+function populateSensorDropdown(selectedBuilding, selectedFloor) {
+    const sensorSelect = document.getElementById('sensor-id');
+    sensorSelect.innerHTML = '<option value="" disabled selected>Select a sensor ID</option>';
+    
+    const sensors = sensorIds[selectedBuilding][selectedFloor];
+    sensors.forEach(sensor => {
+        const option = document.createElement('option');
+        option.value = sensor;
+        option.textContent = sensor;
+        sensorSelect.appendChild(option);
+    });
+}
 
-document.getElementById('clearDB').addEventListener('click', async () => {
-  console.log('Clear DB button clicked');
-  try {
-    const result = await window.electronAPI.invokeChaincode('deleteDataDB');
-    appendToTerminal('Database cleared ' + result);
-  } catch (error) {
-    console.error('Error clearing database:', error);
-    appendToTerminal(`Error clearing database: ${error.message}`);
+function appendToTerminal(message, className = '') {
+  // Create a div element for the message
+  const line = document.createElement('div');
+  line.textContent = message;
+  if (className) {
+      line.classList.add(className);
   }
-});
+  
+  // Add the message to the terminal
+  terminal.appendChild(line);
+  
+  // Add an empty line after the message to create extra space
+  const spacer = document.createElement('div'); // Create a new div for the spacer
+  spacer.style.height = '10px'; // Set a height for the spacer (puoi modificarlo)
+  terminal.appendChild(spacer);
+  
+  // Scroll to the bottom
+  terminal.scrollTop = terminal.scrollHeight;
+}
 
-document.getElementById('viewCommittedBlocks').addEventListener('click', async () => {
-  console.log('View committed blocks button clicked');
-  try {
-    const result = await window.electronAPI.invokeChaincode('viewCommittedBlocks');
-    appendToTerminal('Committed blocks: ' + result);
-  } catch (error) {
-    console.error('Error querying blocks:', error);
-    appendToTerminal(`Error querying blocks: ${error.message}`);
-  }
-});
-// Add other event listeners as needed

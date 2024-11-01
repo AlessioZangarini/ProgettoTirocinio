@@ -5,37 +5,146 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>User Interface</title>
   <style>
-    /* CSS */
-    #terminal {
-      white-space: pre-wrap; /* Preserve formatting */
-      height: 400px; /* Adjust height as needed */
-      overflow-y: scroll; /* Enable scrolling */
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      font-size: 16px;
+      background-color: #e0f7fa; 
+    }
+    .container {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      grid-gap: 20px;
       border: 1px solid #ccc;
-      padding: 10px;
+      padding: 20px;
+      min-height: 700px;
+      border-radius: 20px; 
+      background-color: white;
+    }
+    .left-panel {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: 100%;
+    }
+    .right-panel {
+      display: flex;
+      flex-direction: column;
+    }
+    .section {
+      border: 1px solid #ddd;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 15px; 
+      background-color: #b2ebf2; 
+    }
+    .section h3 {
+      text-align: center;
+      margin-top: 0;
+      margin-bottom: 15px;
+      font-size: 1.2em;
+    }
+    .input-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      grid-gap: 12px;
+    }
+    .button-group {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      grid-gap: 12px;
+      margin-top: 15px;
+    }
+    #terminal {
+      flex-grow: 1;
+      overflow-y: scroll;
+      border: 1px solid #ccc;
+      padding: 15px;
       background: #f5f5f5;
+      margin-bottom: 15px;
+      height: 500px;
+      border-radius: 15px; 
+    }
+    .terminal-container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    button, select, input {
+      padding: 10px;
+      margin: 2px;
+      width: 100%;
+      font-size: 1em;
+      box-sizing: border-box;
+      border-radius: 20px; 
+      border: 1px solid #ccc;
+    }
+    button:hover, select:hover, input:hover {
+      background-color: #80deea; 
+    }
+    label {
+      display: none;
     }
   </style>
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'">
 </head>
 <body>
-  <div id="data-simulation">
-    <button id="initializeUI">Initialize UI</button>
-    <button id="startSimulation">Start Simulation</button>
-    <button id="stopSimulation">Stop Simulation</button>
-    <div id="terminal"></div>
-  </div>
-  <div id="data-insertion">
-    <input type="text" id="sensor-id" placeholder="Id">
-    <input type="text" id="building" placeholder="Build.">
-    <input type="text" id="location" placeholder="Floor">
-    <input type="text" id="co2" placeholder="CO2">
-    <input type="text" id="form" placeholder="Form">
-    <input type="text" id="pm" placeholder="PM...">
-    <button id="saveData">Save Data on DB</button>
-    <button id="aggregateData">Aggregate Data</button>
-    <button id="clearDB">Clear DB</button>
-    <button id="viewCommittedBlocks">View Committed Blocks</button>
-    <button id="validateCommittedBlocks">Validate Committed Blocks</button>
+  <div class="container">
+    <div class="left-panel">
+
+      <div class="section">
+        <h3>Initialization</h3>
+        <button id="initializeLedger">Initialize Ledger</button>
+      </div>
+
+      <div class="section">
+        <h3>Data Insertion</h3>
+        <div class="input-grid">
+          <select id="building">
+            <option value="" disabled selected>Select a building</option>
+            <option value="Building_1">Building 1</option>
+            <option value="Building_2">Building 2</option>
+            <option value="Building_3">Building 3</option>
+            <option value="Building_4">Building 4</option>
+          </select>
+          <select id="location" disabled>
+            <option value="" disabled selected>Select a location</option>
+          </select>
+          <select id="sensor-id" disabled>
+            <option value="" disabled selected>Select a sensor ID</option>
+          </select>
+          <input type="text" id="co2" placeholder="CO2" class="numeric-input">
+          <input type="text" id="form" placeholder="Form" class="numeric-input">
+          <input type="text" id="pm" placeholder="PM2.5" class="numeric-input">
+        </div>
+        
+        <div class="button-group">
+          <button id="saveData">Save Data on DB</button>
+          <button id="aggregateData">Aggregate Data</button>
+        </div>
+      </div>
+      
+      <div class="section">
+        <h3>Data Simulation</h3>
+        <div class="button-group">
+          <button id="startSimulation">Start Simulation</button>
+          <button id="stopSimulation">Stop Simulation</button>
+        </div>
+      </div>
+    </div>
+    
+    <div class="right-panel">
+      <div class="terminal-container">
+        <h3>Terminal</h3>
+        <div id="terminal"></div>
+      </div>
+      <div class="button-group">
+        <button id="viewCommittedBlocks">View Committed Blocks</button>
+        <button id="validateCommittedBlocks">Validate Committed Blocks</button>
+        <button id="clearDB">Clear DB</button>
+        <button id="deleteLedger">Delete Ledger</button>
+      </div>
+    </div>
   </div>
   <script src="renderer.js"></script>
 </body>
