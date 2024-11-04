@@ -10,34 +10,11 @@ const execPromise = util.promisify(exec);  // Convert exec to use promises
 const fs = require('fs');
 
 // Base path for Fabric samples and network configuration
-const fabricSamplesPath = '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples';
-
-// Helper function to convert Windows paths to WSL (Windows Subsystem for Linux) compatible paths
-function toWSLPath(windowsPath) {
-  return windowsPath
-    .replace(/\\/g, '/')  // Replace Windows backslashes with forward slashes
-    .replace(/^([A-Za-z]):/, (_, letter) => `/mnt/${letter.toLowerCase()}`);  // Convert drive letter to WSL format
-}
-
-// Helper function to ensure directory exists, creates if not
-async function ensureDirectoryExists(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-  }
-}
-
-// Define paths for organization keys and certificates
-const orgPaths = {
-  org1: {
-    certPath: `${fabricSamplesPath}/test-network/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp/signcerts/peer0.org1.example.com-cert.pem`,
-    keyPath: `${fabricSamplesPath}/test-network/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp/keystore`
-  },
-  org2: {
-    certPath: `${fabricSamplesPath}/test-network/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp/signcerts/peer0.org2.example.com-cert.pem`,
-    keyPath: `${fabricSamplesPath}/test-network/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp/keystore`
-  }
-};
-
+const BASE_PATH = path.join(__dirname, '..');  // Assuming the app is in a subdirectory
+const FABRIC_SAMPLES_PATH = path.join(BASE_PATH, 'fabric-samples');
+const TEST_NETWORK_PATH = path.join(FABRIC_SAMPLES_PATH, 'test-network');
+const CONFIG_PATH = path.join(FABRIC_SAMPLES_PATH, 'config');
+const BIN_PATH = path.join(FABRIC_SAMPLES_PATH, 'bin');
 
 // Environmental thresholds for air quality monitoring
 const THRESHOLD_CO2 = 1000;      // CO2 threshold in ppm
@@ -52,6 +29,27 @@ let isSimulationRunning = false; // Flag to track simulation status
 let isAggregatingData = false;   // Flag to prevent concurrent aggregation
 let mainWindow = null;           // Main application window reference
 
+
+// Helper function to convert Windows paths to WSL (Windows Subsystem for Linux) compatible paths
+function toWSLPath(windowsPath) {
+  return windowsPath
+    .replace(/\\/g, '/')  // Replace Windows backslashes with forward slashes
+    .replace(/^([A-Za-z]):/, (_, letter) => `/mnt/${letter.toLowerCase()}`);
+}
+
+// Define paths for organization keys and certificates
+const orgPaths = {
+  org1: {
+    certPath: path.join(TEST_NETWORK_PATH, 'organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp/signcerts/peer0.org1.example.com-cert.pem'),
+    keyPath: path.join(TEST_NETWORK_PATH, 'organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/msp/keystore')
+  },
+  org2: {
+    certPath: path.join(TEST_NETWORK_PATH, 'organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp/signcerts/peer0.org2.example.com-cert.pem'),
+    keyPath: path.join(TEST_NETWORK_PATH, 'organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/msp/keystore')
+  }
+};
+
+
 // Create and configure the main application window
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -59,22 +57,21 @@ function createWindow() {
     height: 600,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,  // Disable direct Node.js integration for security
-      contextIsolation: true,  // Enable context isolation for security
+      nodeIntegration: false,
+      contextIsolation: true,
       enableBlinkFeatures: 'AutofillFeaturePolicy'
     }
   });
 
-  // Load the main HTML file
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
-  // Handle window close event
   mainWindow.on('closed', function() {
     mainWindow = null;
   });
 
   // Initial directory check in WSL environment
-  exec(`wsl bash -c "cd '${fabricSamplesPath}' && ls"`, (error, stdout, stderr) => {
+  const wslPath = toWSLPath(FABRIC_SAMPLES_PATH);
+  exec(`wsl bash -c "cd '${wslPath}' && ls"`, (error, stdout, stderr) => {
     if (error) {
       console.error(`Error executing command: ${error}`);
       sendOutputToRenderer(`Error executing command: ${error}`);
@@ -87,24 +84,6 @@ function createWindow() {
     }
     console.log(`Directory contents: ${stdout}`);
   });
-}
-
-// Verify OpenSSL installation in WSL environment
-// OpenSSL is required for cryptographic operations
-async function checkOpenSSL() {
-  try {
-    console.log("Checking OpenSSL installation in WSL...");
-    const { stdout, stderr } = await execPromise('wsl openssl version');
-    if (stderr) {
-      console.error(`Error checking OpenSSL: ${stderr}`);
-      return false;
-    }
-    console.log(`OpenSSL version: ${stdout.trim()}`);
-    return true;
-  } catch (error) {
-    console.error("OpenSSL is not installed or not accessible in WSL:", error.message);
-    return false;
-  }
 }
 
 // Read organization certificates from WSL environment
@@ -216,21 +195,20 @@ const preparePemKeysAndCerts = async () => {
 
 // Initialize the Hyperledger Fabric network
 async function openNetwork() {
-  // Network initialization commands
+  const networkScript = path.join(TEST_NETWORK_PATH, 'network.sh');
+  const chaincodePath = path.join(BASE_PATH, 'main');
+  const wslNetworkScript = toWSLPath(networkScript);
+  const wslChaincodePath = toWSLPath(chaincodePath);
+
   const commands = [
-    // Start the network
-    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh up',
-    // Create the channel
-    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh createChannel',
-    // Deploy the chaincode
-    '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh deployCC -ccn ProgettoTirocinio -ccp /mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/main -ccl javascript'
+    `${wslNetworkScript} up`,
+    `${wslNetworkScript} createChannel`,
+    `${wslNetworkScript} deployCC -ccn ProgettoTirocinio -ccp ${wslChaincodePath} -ccl javascript`
   ];
 
-  // Execute each command sequentially
   for (let i = 0; i < commands.length; i++) {
     const command = commands[i];
     try {
-      // Send appropriate status messages
       if(i==0) {
         sendOutputToRenderer(`Opening network...`);
       }
@@ -255,7 +233,6 @@ async function openNetwork() {
     } catch (error) {
       console.error(`Error executing command ${command}:`, error);
       sendOutputToRenderer(`Error executing command ${command}: ${error}`);
-      
       sendOutputToRenderer('Network initialization failed. Please check the error and try again.');
       return;
     }
@@ -317,26 +294,39 @@ function checkThreshold(args) {
 async function invokeChaincode(funcName, args = []) {
   console.log(`Invoking chaincode function: ${funcName} with args:`, args);
 
-  // Base command string with all necessary environment variables and peer configurations
+  // Build paths for TLS certificates and MSP config
+  const org1TLSCert = path.join(TEST_NETWORK_PATH, 'organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt');
+  const org2TLSCert = path.join(TEST_NETWORK_PATH, 'organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt');
+  const ordererTLSCert = path.join(TEST_NETWORK_PATH, 'organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem');
+  const mspConfigPath = path.join(TEST_NETWORK_PATH, 'organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp');
+
+  // Convert paths to WSL format
+  const wslOrg1TLSCert = toWSLPath(org1TLSCert);
+  const wslOrg2TLSCert = toWSLPath(org2TLSCert);
+  const wslOrdererTLSCert = toWSLPath(ordererTLSCert);
+  const wslMspConfigPath = toWSLPath(mspConfigPath);
+  const wslBinPath = toWSLPath(BIN_PATH);
+  const wslConfigPath = toWSLPath(CONFIG_PATH);
+
   let command = `
-    PATH=/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/bin
-    FABRIC_CFG_PATH=/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/config 
+    PATH=${wslBinPath}
+    FABRIC_CFG_PATH=${wslConfigPath}
     CORE_PEER_TLS_ENABLED=true 
     CORE_PEER_LOCALMSPID=Org1MSP 
-    CORE_PEER_TLS_ROOTCERT_FILE=/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt 
-    CORE_PEER_MSPCONFIGPATH=/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/users/Admin@org1.example.com/msp 
+    CORE_PEER_TLS_ROOTCERT_FILE=${wslOrg1TLSCert}
+    CORE_PEER_MSPCONFIGPATH=${wslMspConfigPath}
     CORE_PEER_ADDRESS=localhost:7051 
     peer chaincode invoke 
     -o localhost:7050 
     --ordererTLSHostnameOverride orderer.example.com 
     --tls 
-    --cafile "/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/organizations/ordererOrganizations/example.com/orderers/orderer.example.com/msp/tlscacerts/tlsca.example.com-cert.pem" 
+    --cafile "${wslOrdererTLSCert}"
     -C mychannel 
     -n ProgettoTirocinio 
     --peerAddresses localhost:7051 
-    --tlsRootCertFiles "/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt" 
+    --tlsRootCertFiles "${wslOrg1TLSCert}"
     --peerAddresses localhost:9051 
-    --tlsRootCertFiles "/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/organizations/peerOrganizations/org2.example.com/peers/peer0.org2.example.com/tls/ca.crt" 
+    --tlsRootCertFiles "${wslOrg2TLSCert}"
   `;
 
   // Handle different chaincode functions
@@ -520,12 +510,11 @@ function stopSimulation() {
 // Shut down the Hyperledger Fabric network
 async function closeNetwork() {
   console.log('Shutting down network...');
-
-  // Command to shut down the network
-  const command = '/mnt/c/Users/aless/Desktop/TIRO/ProgettoTirocinio/fabric-samples/test-network/network.sh down';
+  const networkScript = path.join(TEST_NETWORK_PATH, 'network.sh');
+  const wslNetworkScript = toWSLPath(networkScript);
+  const command = `${wslNetworkScript} down`;
 
   try {
-    // Execute network shutdown command
     const { stdout, stderr } = await execPromise(`wsl ${command}`);
     if (stderr) {
       console.error(`stderr for ${command}:`, stderr);

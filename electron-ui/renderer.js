@@ -71,6 +71,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const pm = document.getElementById('pm').value;
 
     const args = [building, location, sensorId, co2, form, pm];
+    if(building==""||location==""||sensorId==""||co2==""||form==""||pm==""){
+      appendToTerminal('No data found, simulating arguments...');
+    }
     const result = await window.electronAPI.invokeChaincode('registerDataDB', args);
     appendToTerminal(result);
   });

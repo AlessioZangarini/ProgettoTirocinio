@@ -62,11 +62,12 @@ class Edgenode extends Contract {
             // Generate simulated sensor data
             data = {
                 timestamp: timestamp,
+                sentimestamp: timestamp,
                 sensorId: sensorId,
                 location: `${randomBuilding}, ${randomFloor}`,
-                CO2: randomInRange(300, 1000),        // CO2 levels in ppm
-                PM25: Math.round(random() * 50 * 100) / 100,  // PM2.5 levels in µg/m³
-                VOCs: randomInRange(0, 1000)          // VOC levels in ppb
+                CO2: randomInRange(400, 1200),        // CO2 levels in ppm 
+                PM25: Math.round(random() * 20 * 100) / 100,  // PM2.5 levels in µg/m³
+                VOCs: Math.round(random() * 0.2 * 1000) / 1000  // VOC levels in ppm 
             };
         } else {
             // Use provided parameters for data creation
