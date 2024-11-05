@@ -7,11 +7,10 @@ const crypto = require('crypto');                     // For cryptographic opera
 // Validator class handles data validation and verification in the blockchain
 class Validator extends Contract {
 
-    // Query and return all aggregated data from the blockchain
-    async queryAggregatedData(ctx) {
+// Query and return all aggregated data from the blockchain
+async queryAggregatedData(ctx) {
         try {
             console.log("Starting queryAggregatedData function");
-            // Define key range for aggregated data lookup
             const startKey = 'aggregation_';
             const endKey = 'aggregation_\uffff';
             const iterator = await ctx.stub.getStateByRange(startKey, endKey);
@@ -19,16 +18,22 @@ class Validator extends Contract {
             const aggregations = [];
             let result = await iterator.next();
     
-            // Iterate through all aggregated data entries
             while (!result.done) {
                 const key = result.value.key;
                 const value = result.value.value.toString('utf8');
                 console.log(`Found key: ${key}, value: ${value}`);
                 try {
                     const aggregation = JSON.parse(value);
+                    const formattedAggregation = this.formatAggregationData(aggregation);
+                    if (!formattedAggregation.aggregationNumber) {
+                        const matches = key.match(/aggregation_(\d+)_/);
+                        const aggregationNumber = matches ? parseInt(matches[1]) : 0;
+                        formattedAggregation.aggregationNumber = aggregationNumber;
+                    }
+    
                     aggregations.push({
                         id: key,
-                        data: aggregation
+                        data: formattedAggregation
                     });
                 } catch (err) {
                     console.log(`Error parsing aggregation data: ${err}`);
@@ -38,9 +43,18 @@ class Validator extends Contract {
     
             await iterator.close();
     
-            // Sort aggregations by timestamp if any exist
             if (aggregations.length > 0) {
-                aggregations.sort((a, b) => new Date(b.data.timestamp) - new Date(a.data.timestamp));
+                // Ordina prima per numero di aggregazione e poi per timestamp
+                aggregations.sort((a, b) => {
+                    const numA = a.data.aggregationNumber || 0;
+                    const numB = b.data.aggregationNumber || 0;
+                    if (numA !== numB) {
+                        return numB - numA; // Sort from aggregation number
+                    }
+                    // Eventually if there are two aggregation with the same number they get sorted from timestamp
+                    return new Date(b.data.timestamp) - new Date(a.data.timestamp);
+                });
+                
                 console.log(`Found ${aggregations.length} aggregations`);
                 return JSON.stringify(aggregations);
             } else {
@@ -52,6 +66,34 @@ class Validator extends Contract {
             console.error(`Error in queryAggregatedData: ${error}`);
             return JSON.stringify({ error: `Error querying aggregated data: ${error.message}` });
         }
+    }
+    
+    // Helper function to format aggregation data with units
+    formatAggregationData(aggregation) {
+        const formattedAggregation = { ...aggregation };
+
+        if (!aggregation.avgCO2.hasOwnProperty('value')) {
+            formattedAggregation.avgCO2 = {
+                value: aggregation.avgCO2,
+                unit: 'ppm'
+            };
+        }
+
+        if (!aggregation.avgPM25.hasOwnProperty('value')) {
+            formattedAggregation.avgPM25 = {
+                value: aggregation.avgPM25,
+                unit: 'ug/m3'  
+            };
+        }
+
+        if (!aggregation.avgVOCs.hasOwnProperty('value')) {
+            formattedAggregation.avgVOCs = {
+                value: aggregation.avgVOCs,
+                unit: 'ppm'
+            };
+        }
+
+        return formattedAggregation;
     }
 
     // Retrieve block information by block number
@@ -101,7 +143,6 @@ class Validator extends Contract {
     async ValidateData(ctx, org1Key, org1Cert, org2Key, org2Cert) {
         console.log('========== Starting Validation Process ==========');
         try {
-            // Decode and organize organization credentials
             const keys = {
                 'Org1MSP': { 
                     key: Buffer.from(org1Key, 'base64').toString(),
@@ -112,16 +153,14 @@ class Validator extends Contract {
                     certificate: Buffer.from(org2Cert, 'base64').toString()
                 }
             };
-
+    
             console.log('✅ Successfully decoded all keys and certificates');
             
-            // Get all aggregations for validation
             const startKey = 'aggregation_';
             const endKey = 'aggregation_\uffff';
             const iterator = await ctx.stub.getStateByRange(startKey, endKey);
             const aggregations = [];
             
-            // Process all aggregations
             let result = await iterator.next();
             while (!result.done) {
                 try {
@@ -137,26 +176,22 @@ class Validator extends Contract {
                 result = await iterator.next();
             }
             await iterator.close();
-
+    
             aggregations.sort((a, b) => a.id.localeCompare(b.id));
-
+    
             console.log('Starting validation of all aggregations');
             console.log(`Found ${aggregations.length} aggregations`);
-
+    
             const validationResults = [];
             
-            // Define endorsement policy requirements
             const endorsementPolicy = {
                 minEndorsements: 2,
                 organizations: ['Org1MSP', 'Org2MSP']
             };
-
-            // Validate each aggregation
+    
             for (const agg of aggregations) {
                 console.log(`Validating aggregation with ID: ${agg.id}`);
-                
                 try {
-                    // Simulate endorsements and validate the data
                     const simEndorsements = await this.simulateEndorsements(ctx, agg.data, endorsementPolicy, keys);
                     const isValid = await this.validateAggregatedData(agg.id, agg.data, simEndorsements);
                     validationResults.push({
@@ -171,26 +206,29 @@ class Validator extends Contract {
                     });
                 }
             }
-
-            // Calculate validation statistics
+    
+            // After validation, remove all aggregations
+            for (const agg of aggregations) {
+                await ctx.stub.deleteState(agg.id);
+                console.log(`Deleted aggregation: ${agg.id}`);
+            }
+    
             const statistics = {
                 total: validationResults.length,
                 successful: validationResults.filter(r => r.result === true).length,
                 failed: validationResults.filter(r => r.result === false).length
             };
-
-            // Create unique validation result ID
+    
             const validationResultId = `validation-result_${aggregations.map(a => a.id).join('_')}`;
             
-            // Log validation summary
             console.log('========== Validation Summary ==========');
             console.log(`✅ Total aggregations processed: ${statistics.total}`);
             console.log(`✅ Successfully validated: ${statistics.successful}`);
             console.log(`❌ Failed validations: ${statistics.failed}`);
             console.log(`🆔 Validation Result ID: ${validationResultId}`);
+            console.log('All aggregations have been removed after validation');
             console.log('=======================================');
-
-            // Prepare and store validation results
+    
             const validationResult = {
                 status: 'SUCCESS',
                 message: 'Validation process completed',
@@ -198,15 +236,16 @@ class Validator extends Contract {
                 validationResultId,
                 results: validationResults
             };
-
+    
             await ctx.stub.putState(validationResultId, Buffer.from(JSON.stringify(validationResult)));
             return validationResult;
-
+    
         } catch (error) {
             console.error('❌ Error in ValidateData:', error);
             throw error;
         }
     }
+
 
     // Validate a single aggregated data entry
     async validateAggregatedData(aggregationId, aggregatedData, endorsements) {

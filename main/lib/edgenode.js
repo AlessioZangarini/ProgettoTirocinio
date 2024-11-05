@@ -59,28 +59,44 @@ class Edgenode extends Contract {
             const possibleIds = sensorIds[randomBuilding][randomFloor];
             const sensorId = possibleIds[randomInRange(0, possibleIds.length - 1)];
         
-            // Generate simulated sensor data
+            // Generate simulated data with units
             data = {
                 timestamp: timestamp,
-                sentimestamp: timestamp,
                 sensorId: sensorId,
                 location: `${randomBuilding}, ${randomFloor}`,
-                CO2: randomInRange(400, 1200),        // CO2 levels in ppm 
-                PM25: Math.round(random() * 20 * 100) / 100,  // PM2.5 levels in µg/m³
-                VOCs: Math.round(random() * 0.2 * 1000) / 1000  // VOC levels in ppm 
+                CO2: {
+                    value: randomInRange(400, 1200),
+                    unit: 'ppm'
+                },
+                PM25: {
+                    value: Math.round(random() * 20 * 100) / 100,
+                    unit: 'ug/m3'
+                },
+                VOCs: {
+                    value: Math.round(random() * 0.2 * 1000) / 1000,
+                    unit: 'ppm'
+                }
             };
         } else {
-            // Use provided parameters for data creation
+            // Use provided parameters for data creation with units
             data = {
                 timestamp: timestamp,
                 sensorId: id,
                 location: `${build}, ${floor}`,
-                CO2: parseInt(CO2),
-                PM25: parseFloat(PM25),
-                VOCs: parseInt(VOCs)
+                CO2: {
+                    value: parseInt(CO2),
+                    unit: 'ppm'
+                },
+                PM25: {
+                    value: parseFloat(PM25),
+                    unit: 'ug/m3'
+                },
+                VOCs: {
+                    value: parseFloat(VOCs),
+                    unit: 'ppm'
+                }
             };
         }
-        
         // MongoDB connection configuration
         const uri = "mongodb://172.25.208.248:27017";
         console.log(`Attempting to connect to MongoDB at ${uri}`);
@@ -199,6 +215,26 @@ class Edgenode extends Contract {
         }
     }
     
+    async getCurrentCounter(ctx) {
+        try {
+            const counterBytes = await ctx.stub.getState('AggregationCounter');
+            if (!counterBytes || counterBytes.length === 0) {
+                return 0;
+            }
+            return parseInt(counterBytes.toString());
+        } catch (error) {
+            console.error('Error reading counter:', error);
+            return 0;
+        }
+    }
+
+    async incrementCounter(ctx) {
+        const currentCounter = await this.getCurrentCounter(ctx);
+        const newCounter = currentCounter + 1;
+        await ctx.stub.putState('AggregationCounter', Buffer.from(newCounter.toString()));
+        return newCounter;
+    }
+
     // Aggregate sensor data and verify data integrity
     async aggregateData(ctx) {
         try {
@@ -206,27 +242,23 @@ class Edgenode extends Contract {
             let currentTime = ctx.stub.getTxTimestamp().seconds.low * 1000;
             let lastAggregation = parseInt((await ctx.stub.getState('LastAggregation')).toString() || '0');
             
-            // Get sensor data from MongoDB
             const sensorDataArray = await this.getDataDB(ctx);
             console.log(`Retrieved ${sensorDataArray.length} sensor data entries`);
             
-            // Check if enough time has passed since last aggregation (15 minutes)
             if (currentTime - lastAggregation < 900 * 1000) {
-                return 'Not enough time has passed to aggregate data';
+                return JSON.stringify({ error: "Not enough time has passed to aggregate data" });
             }
             
-            // Initialize aggregation variables
             let totalCO2 = 0;
             let totalPM25 = 0;
             let totalVOCs = 0;
             let count = 0;
     
-            // Process each sensor reading
             for (const sensorData of sensorDataArray) {
                 try {
-                    totalCO2 += sensorData.CO2;
-                    totalPM25 += sensorData.PM25;
-                    totalVOCs += sensorData.VOCs;
+                    totalCO2 += sensorData.CO2.value;
+                    totalPM25 += sensorData.PM25.value;
+                    totalVOCs += sensorData.VOCs.value;
                     count += 1;
                 } catch (err) {
                     console.log(`Error processing sensor data: ${err}`);
@@ -234,39 +266,68 @@ class Edgenode extends Contract {
             }
     
             console.log(`Processed ${count} valid sensor data entries`);
-    
+            
+            // Checks for other aggregations
             if (count > 0) {
-                // Calculate averages
-                const avgCO2 = totalCO2 / count;
-                const avgPM25 = totalPM25 / count;
-                const avgVOCs = totalVOCs / count;
+                const startKey = 'aggregation_';
+                const endKey = 'aggregation_\uffff';
+                const iterator = await ctx.stub.getStateByRange(startKey, endKey);
+                let maxAggregationNumber = 0;
+                let hasExistingAggregations = false;
     
-                // Create timestamp from transaction
+                let result = await iterator.next();
+                while (!result.done) {
+                    hasExistingAggregations = true; 
+                    try {
+                        const value = result.value.value.toString('utf8');
+                        const aggregation = JSON.parse(value);
+                        if (aggregation.aggregationNumber) {
+                            maxAggregationNumber = Math.max(maxAggregationNumber, aggregation.aggregationNumber);
+                        }
+                    } catch (err) {
+                        console.log(`Error parsing aggregation: ${err}`);
+                    }
+                    result = await iterator.next();
+                }
+                await iterator.close();
+    
+                // Resets the aggregation number to 1
+                const aggregationNumber = hasExistingAggregations ? maxAggregationNumber + 1 : 1;
                 const txTimestamp = ctx.stub.getTxTimestamp();
                 const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
     
-                // Prepare aggregated data
                 const aggregatedData = {
-                    avgCO2: avgCO2,
-                    avgPM25: avgPM25,
-                    avgVOCs: avgVOCs,
+                    aggregationNumber: aggregationNumber,
+                    avgCO2: {
+                        value: totalCO2 / count,
+                        unit: 'ppm'
+                    },
+                    avgPM25: {
+                        value: totalPM25 / count,
+                        unit: 'ug/m3'
+                    },
+                    avgVOCs: {
+                        value: totalVOCs / count,
+                        unit: 'ppm'
+                    },
                     count: count,
                     timestamp: timestamp
                 };
     
-                // Generate unique aggregation ID
-                const aggregationId = `aggregation_${timestamp}`;
+                const aggregationId = `aggregation_${aggregationNumber}_${timestamp}`;
     
                 console.log(`Saving aggregated data with ID: ${aggregationId}`);
                 console.log(`Aggregated data: ${JSON.stringify(aggregatedData)}`);
     
-                // Store aggregated data in blockchain
                 await ctx.stub.putState(aggregationId, Buffer.from(JSON.stringify(aggregatedData)));
-                // Clear processed data from MongoDB
                 await this.deleteDataDB(ctx);
     
                 console.log(`Data aggregated successfully. ID: ${aggregationId}`);
-                return JSON.stringify({ message: "Data aggregated successfully", id: aggregationId });
+                return JSON.stringify({ 
+                    message: "Data aggregated successfully", 
+                    id: aggregationId,
+                    aggregationNumber: aggregationNumber
+                });
             } else {
                 console.log("No data available for aggregation");
                 return JSON.stringify({ error: "No data available for aggregation" });
@@ -277,7 +338,8 @@ class Edgenode extends Contract {
             return JSON.stringify({ error: `Error aggregating data: ${error.message}` });
         }
     }
-    
+
+
     // Get hashes of all data in MongoDB
     async getDataHashes(ctx) {
         const data = await this.getDataDB(ctx);
@@ -299,17 +361,26 @@ class Edgenode extends Contract {
 
         // Sum up all measurements
         for (let item of data) {
-            sum.CO2 += item.CO2;
-            sum.PM25 += item.PM25;
-            sum.VOCs += item.VOCs;
+            sum.CO2 += item.CO2.value;
+            sum.PM25 += item.PM25.value;
+            sum.VOCs += item.VOCs.value;
         }
 
-        // Calculate averages
+        // Calculate averages with units
         return {
             count: count,
-            avgCO2: sum.CO2 / count,
-            avgPM25: sum.PM25 / count,
-            avgVOCs: sum.VOCs / count
+            avgCO2: {
+                value: sum.CO2 / count,
+                unit: 'ppm'
+            },
+            avgPM25: {
+                value: sum.PM25 / count,
+                unit: 'µg/m³'
+            },
+            avgVOCs: {
+                value: sum.VOCs / count,
+                unit: 'ppm'
+            }
         };
     }
 

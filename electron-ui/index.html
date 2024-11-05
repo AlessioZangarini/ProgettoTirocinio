@@ -55,6 +55,35 @@
       grid-gap: 12px;
       margin-top: 15px;
     }
+    .terminal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .clear-button {
+      padding: 5px 15px;  
+      font-size: 0.9em;
+      width: fit-content;  
+      min-width: 60px;    
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      margin-left: auto;  
+      height: 30px;
+    }
+    .clear-button:hover {
+      background-color: #80deea;
+    }
+    .clear-button.button {
+      width: fit-content;
+      margin: 0;
+    }
+    .terminal-header h3 {
+      margin: 0;        
+      flex: 1;          
+    }
     #terminal {
       flex-grow: 1;
       overflow-y: scroll;
@@ -135,7 +164,10 @@
     
     <div class="right-panel">
       <div class="terminal-container">
-        <h3>Terminal</h3>
+        <div class="terminal-header">
+          <h3>Terminal</h3>
+          <button class="clear-button" id="clearTerminal">Clear</button>
+        </div>
         <div id="terminal"></div>
       </div>
       <div class="button-group">

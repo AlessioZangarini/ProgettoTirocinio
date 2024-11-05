@@ -72,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const args = [building, location, sensorId, co2, form, pm];
     if(building==""||location==""||sensorId==""||co2==""||form==""||pm==""){
-      appendToTerminal('No data found, simulating arguments...');
+      appendToTerminal('Incomplete data fields, simulating arguments...');
     }
     const result = await window.electronAPI.invokeChaincode('registerDataDB', args);
     appendToTerminal(result);
@@ -87,13 +87,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // Start Simulation button
   document.getElementById('startSimulation').addEventListener('click', () => {
     window.electronAPI.startSimulation();
-    appendToTerminal('Simulation started');
+    appendToTerminal('Starting simulation...');
   });
 
   // Stop Simulation button
   document.getElementById('stopSimulation').addEventListener('click', () => {
     window.electronAPI.stopSimulation();
-    appendToTerminal('Simulation stopped');
   });
 
   // View Committed Blocks button
@@ -118,6 +117,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('deleteLedger').addEventListener('click', async () => {
     const result = await window.electronAPI.closeNetwork();
     appendToTerminal(result);
+  });
+
+  // Clear Terminal button
+  document.getElementById('clearTerminal').addEventListener('click', () => {
+    const terminal = document.getElementById('terminal');
+    terminal.innerHTML = '';
   });
 
   // Listen for command output from main process

@@ -29,11 +29,10 @@ let isSimulationRunning = false; // Flag to track simulation status
 let isAggregatingData = false;   // Flag to prevent concurrent aggregation
 let mainWindow = null;           // Main application window reference
 
-
 // Helper function to convert Windows paths to WSL (Windows Subsystem for Linux) compatible paths
 function toWSLPath(windowsPath) {
   return windowsPath
-    .replace(/\\/g, '/')  // Replace Windows backslashes with forward slashes
+    .replace(/\\/g, '/')
     .replace(/^([A-Za-z]):/, (_, letter) => `/mnt/${letter.toLowerCase()}`);
 }
 
@@ -158,7 +157,6 @@ async function readKeyFromWSL(org) {
   }
 }
 
-
 // Prepare PEM formatted keys and certificates for both organizations
 const preparePemKeysAndCerts = async () => {
   const orgKeysAndCerts = {};
@@ -229,7 +227,6 @@ async function openNetwork() {
       
       console.log(`stdout for ${command}:`, stdout);
       sendOutputToRenderer(`stdout for ${command}: ${stdout}`);
-      
     } catch (error) {
       console.error(`Error executing command ${command}:`, error);
       sendOutputToRenderer(`Error executing command ${command}: ${error}`);
@@ -360,7 +357,6 @@ async function invokeChaincode(funcName, args = []) {
   } 
   // Handle data registration function
   else if (funcName === "registerDataDB") {
-    // Pad arguments array to ensure correct number of parameters
     const paddedArgs = args.concat(Array(6 - args.length).fill("")); 
     const stringArgs = paddedArgs.map(arg => arg.toString());
     sendOutputToRenderer('Calling registerDataDB...');
@@ -371,7 +367,7 @@ async function invokeChaincode(funcName, args = []) {
   // Handle data aggregation function
   else if (funcName === "aggregateData") {
     sendOutputToRenderer('Calling aggregateData...');
-    command += `-c '{"function":"aggregateData","Args":[]}'`;
+    command += `-c '{"function":"aggregateData","Args":[]}'`;  // Semplificato, senza counter
   } 
   // Handle database cleanup function
   else if (funcName === "deleteDataDB") {
@@ -437,7 +433,6 @@ function startSimulation() {
   }
 
   console.log('Starting simulation...');
-  sendOutputToRenderer('Starting simulation...');
   isSimulationRunning = true;
 
   // Initial data registration
@@ -484,32 +479,26 @@ function stopSimulation() {
     return;
   }
 
-  console.log('Stopping simulation...');
-  sendOutputToRenderer('Stopping simulation...');
-  
   // Clear all intervals and timeouts
   if (simulationInterval1) {
     clearInterval(simulationInterval1);
     console.log('Cleared registerDataDB interval.');
-    sendOutputToRenderer('Cleared registerDataDB interval.');
   }
   if (simulationInterval2) {
     clearInterval(simulationInterval2);
     console.log('Cleared aggregateData interval.');
-    sendOutputToRenderer('Cleared aggregateData interval.');
   }
   if (simulationTimeout) {
     clearTimeout(simulationTimeout);
     console.log('Cleared simulation timeout.');
-    sendOutputToRenderer('Cleared simulation timeout.');
   }
-
   isSimulationRunning = false;
 }
 
 // Shut down the Hyperledger Fabric network
 async function closeNetwork() {
   console.log('Shutting down network...');
+
   const networkScript = path.join(TEST_NETWORK_PATH, 'network.sh');
   const wslNetworkScript = toWSLPath(networkScript);
   const command = `${wslNetworkScript} down`;
@@ -535,9 +524,11 @@ app.on('ready', createWindow);
 // Handle application shutdown
 app.on('window-all-closed', async () => {
   if (process.platform !== 'darwin') {
+    // Optional, if you want to delete the ledger when the window closes
+    /*
     console.log('All windows are closed, shutting down network ...');
     await closeNetwork();
-    app.quit();
+    app.quit();*/
   }
 });
 
@@ -569,6 +560,8 @@ ipcMain.handle('start-simulation', () => {
 // Handle simulation stop request from renderer
 ipcMain.handle('stop-simulation', () => {
   stopSimulation();
+  sendOutputToRenderer('Simulation stopped');
+
 });
 
 // Handle chaincode invocation requests from renderer
@@ -578,5 +571,17 @@ ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
     return result;
   } catch (error) {
     return `Error invoking chaincode: ${error.message}`;
+  }
+});
+
+ipcMain.handle('close-network', async () => {
+  try {
+    sendOutputToRenderer('Closing network...');
+    await closeNetwork();
+    return 'Network closed successfully, ledger deleted';
+  } catch (error) {
+    console.error('Error closing network:', error);
+    sendOutputToRenderer(`Error closing network: ${error.message}`);
+    return `Error closing network: ${error.message}`;
   }
 });
