@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Expose functions to renderer
 contextBridge.exposeInMainWorld('electronAPI', {
   initializeLedger: () => ipcRenderer.invoke('initializeLedger'),
   invokeChaincode: (funcName, args) => ipcRenderer.invoke('invoke-chaincode', funcName, args),

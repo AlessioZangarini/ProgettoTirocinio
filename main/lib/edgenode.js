@@ -1,21 +1,20 @@
 'use strict';
 
-// Import required dependencies
-const { Contract } = require('fabric-contract-api');  // Base contract class from Fabric
-const crypto = require('crypto');                     // For cryptographic operations
-const stringify = require('json-stringify-deterministic'); // For deterministic JSON string generation
-const sortKeysRecursive = require('sort-keys-recursive');  // For consistent object key ordering
-const { MongoClient } = require('mongodb');           // MongoDB client for off-chain storage
+// Import required dependencies for fabric test-network
+const { Contract } = require('fabric-contract-api');  
+const crypto = require('crypto');                     
+const stringify = require('json-stringify-deterministic'); 
+const { MongoClient } = require('mongodb');           
 
 // Edgenode class extends the Fabric Contract class to handle IoT sensor data
 class Edgenode extends Contract {
 
     // Register IoT sensor data both in MongoDB and on the blockchain
     async registerDataDB(ctx, id, build, floor, CO2, PM25, VOCs) {
+
         // Get transaction timestamp for consistent timing
         const txTimestamp = ctx.stub.getTxTimestamp();
         const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
-    
         let data;
     
         // If no parameters provided, generate simulated data
@@ -24,10 +23,10 @@ class Edgenode extends Contract {
             const seed = txTimestamp.seconds.low;
             const random = require('seedrandom')(seed);
         
-            // Helper function for random number generation within a range
+            // Random number generation within a range
             const randomInRange = (min, max) => Math.floor(random() * (max - min + 1)) + min;
         
-            // Define sensor IDs and their locations across different buildings
+            // Sensor IDs and their locations across different buildings
             const sensorIds = {
                 Building_1: {
                     '1st floor': ['M01', 'M02', 'M03'],
@@ -59,7 +58,7 @@ class Edgenode extends Contract {
             const possibleIds = sensorIds[randomBuilding][randomFloor];
             const sensorId = possibleIds[randomInRange(0, possibleIds.length - 1)];
         
-            // Generate simulated data with units
+            // Generate simulated data
             data = {
                 timestamp: timestamp,
                 sensorId: sensorId,
@@ -77,8 +76,9 @@ class Edgenode extends Contract {
                     unit: 'ppm'
                 }
             };
+
+         // Use provided parameters for data creation with units
         } else {
-            // Use provided parameters for data creation with units
             data = {
                 timestamp: timestamp,
                 sensorId: id,
@@ -97,26 +97,24 @@ class Edgenode extends Contract {
                 }
             };
         }
+
         // MongoDB connection configuration
-        const uri = "mongodb://172.25.208.248:27017";
-        console.log(`Attempting to connect to MongoDB at ${uri}`);
-    
+        const uri = "mongodb://172.25.208.248:27017";    
         let client;
+
         try {
             // Connect to MongoDB with timeout
             client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
             await client.connect();
-            console.log('Connected successfully to MongoDB');
     
             // Access database and collection
             const database = client.db("iotDataDB");
             const collection = database.collection("iotData");
     
             // Insert data into MongoDB
-            const result = await collection.insertOne(data);
-            console.log(`A document was inserted with timestamp: ${data.timestamp}`);
+            await collection.insertOne(data);
     
-            // Remove MongoDB-specific _id before blockchain storage
+            // Remove MongoDB-specific id before blockchain storage
             delete data._id;
     
             // Calculate data hash for blockchain storage
@@ -129,27 +127,21 @@ class Edgenode extends Contract {
             // Update Merkle tree with new hash
             let dataHashes = await this.getDataHashes(ctx);
             dataHashes.push(dataHash);
-    
-            console.log('Data hashes before Merkle root calculation:', dataHashes);
-    
+        
             // Calculate new Merkle root
             let merkleRoot = this.calculateMerkleRoot(dataHashes);
-    
-            console.log('Merkle root to be stored:', merkleRoot);
-    
+        
             // Store updated Merkle root and hashes
             await ctx.stub.putState('MerkleRoot', Buffer.from(merkleRoot));
             await ctx.stub.putState('DataHashes', Buffer.from(JSON.stringify(dataHashes)));
     
             return JSON.stringify(data);
         } catch (err) {
-            console.error('Error in registerDataDB:', err);
             throw err;
         } finally {
             // Ensure MongoDB connection is closed
             if (client) {
                 await client.close();
-                console.log('MongoDB connection closed');
             }
         }
     }
@@ -167,54 +159,63 @@ class Edgenode extends Contract {
     
     // Retrieve all data from MongoDB
     async getDataDB(ctx) {
-        const uri = "mongodb://172.25.208.248:27017";
 
+        // MongoDB connection configuration
+        const uri = "mongodb://172.25.208.248:27017";
         let client;
+
         try {
+
+             // Connect to MongoDB with timeout
             client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
             await client.connect();
+            
+            // Access database and collection
             const database = client.db('iotDataDB');
             const collection = database.collection('iotData');
             
             // Fetch all documents from collection
             const allResults = await collection.find({}).toArray();
             return allResults;
+        
         } catch (err) {
-            console.error('Error in getDataDB:', err);
             throw err;
         } finally {
+            // Ensure MongoDB connection is closed
             if (client) {
                 await client.close();
-                console.log('MongoDB connection closed');
             }
         }
     }
 
     // Delete all data from MongoDB
     async deleteDataDB(ctx) {
+        // MongoDB connection configuration
         const uri = "mongodb://172.25.208.248:27017";
-
         let client;
+
         try {
+
+            // Connect to MongoDB with timeout
             client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
             await client.connect();
-            
+
+            // Access database and collection
             const database = client.db('iotDataDB');
             const collection = database.collection('iotData');
             
             // Remove all documents
             await collection.deleteMany({});
         } catch (err) {
-            console.error('Error in deleteDataDB:', err);
             throw err;
         } finally {
             if (client) {
                 await client.close();
-                console.log('MongoDB connection closed');
             }
         }
     }
     
+    // Get current aggregation number
     async getCurrentCounter(ctx) {
         try {
             const counterBytes = await ctx.stub.getState('AggregationCounter');
@@ -223,11 +224,11 @@ class Edgenode extends Contract {
             }
             return parseInt(counterBytes.toString());
         } catch (error) {
-            console.error('Error reading counter:', error);
             return 0;
         }
     }
 
+    // Increments the aggregation number
     async incrementCounter(ctx) {
         const currentCounter = await this.getCurrentCounter(ctx);
         const newCounter = currentCounter + 1;
@@ -238,22 +239,25 @@ class Edgenode extends Contract {
     // Aggregate sensor data and verify data integrity
     async aggregateData(ctx) {
         try {
-            console.log("Starting aggregateData function");
+            // Get current timestamp and last aggregation time
             let currentTime = ctx.stub.getTxTimestamp().seconds.low * 1000;
             let lastAggregation = parseInt((await ctx.stub.getState('LastAggregation')).toString() || '0');
             
+            // Get all sensor data from the ledger
             const sensorDataArray = await this.getDataDB(ctx);
-            console.log(`Retrieved ${sensorDataArray.length} sensor data entries`);
             
+            // Check if enough time has passed since last aggregation (15 minutes)
             if (currentTime - lastAggregation < 900 * 1000) {
                 return JSON.stringify({ error: "Not enough time has passed to aggregate data" });
             }
             
+            // Initialize aggregation variables
             let totalCO2 = 0;
             let totalPM25 = 0;
             let totalVOCs = 0;
             let count = 0;
-    
+     
+            // Sum up all sensor values
             for (const sensorData of sensorDataArray) {
                 try {
                     totalCO2 += sensorData.CO2.value;
@@ -261,20 +265,20 @@ class Edgenode extends Contract {
                     totalVOCs += sensorData.VOCs.value;
                     count += 1;
                 } catch (err) {
-                    console.log(`Error processing sensor data: ${err}`);
+                    throw(err);
                 }
             }
-    
-            console.log(`Processed ${count} valid sensor data entries`);
-            
-            // Checks for other aggregations
+                
+            // If there's data to aggregate
             if (count > 0) {
+                // Set up range query for existing aggregations
                 const startKey = 'aggregation_';
                 const endKey = 'aggregation_\uffff';
                 const iterator = await ctx.stub.getStateByRange(startKey, endKey);
                 let maxAggregationNumber = 0;
                 let hasExistingAggregations = false;
-    
+     
+                // Iterate through existing aggregations to find highest number
                 let result = await iterator.next();
                 while (!result.done) {
                     hasExistingAggregations = true; 
@@ -285,17 +289,18 @@ class Edgenode extends Contract {
                             maxAggregationNumber = Math.max(maxAggregationNumber, aggregation.aggregationNumber);
                         }
                     } catch (err) {
-                        console.log(`Error parsing aggregation: ${err}`);
+                        throw(err);
                     }
                     result = await iterator.next();
                 }
                 await iterator.close();
-    
-                // Resets the aggregation number to 1
+     
+                // Calculate new aggregation number and timestamp
                 const aggregationNumber = hasExistingAggregations ? maxAggregationNumber + 1 : 1;
                 const txTimestamp = ctx.stub.getTxTimestamp();
                 const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
-    
+     
+                // Create aggregated data object with averages
                 const aggregatedData = {
                     aggregationNumber: aggregationNumber,
                     avgCO2: {
@@ -313,36 +318,36 @@ class Edgenode extends Contract {
                     count: count,
                     timestamp: timestamp
                 };
-    
+     
+                // Create unique ID for this aggregation
                 const aggregationId = `aggregation_${aggregationNumber}_${timestamp}`;
-    
-                console.log(`Saving aggregated data with ID: ${aggregationId}`);
-                console.log(`Aggregated data: ${JSON.stringify(aggregatedData)}`);
-    
+        
+                // Store aggregated data in the ledger
                 await ctx.stub.putState(aggregationId, Buffer.from(JSON.stringify(aggregatedData)));
+                // Delete original sensor data after aggregation
                 await this.deleteDataDB(ctx);
-    
-                console.log(`Data aggregated successfully. ID: ${aggregationId}`);
+     
+                // Return success message with aggregation details
                 return JSON.stringify({ 
                     message: "Data aggregated successfully", 
                     id: aggregationId,
                     aggregationNumber: aggregationNumber
                 });
             } else {
-                console.log("No data available for aggregation");
+                // Return error if no data to aggregate
                 return JSON.stringify({ error: "No data available for aggregation" });
             }
-    
+     
         } catch (error) {
-            console.error(`Error in aggregateData: ${error}`);
+            // Return any errors that occurred during aggregation
             return JSON.stringify({ error: `Error aggregating data: ${error.message}` });
         }
     }
 
-
     // Get hashes of all data in MongoDB
     async getDataHashes(ctx) {
         const data = await this.getDataDB(ctx);
+
         // Generate hashes for each data entry
         const hashes = data.map(item => {
             const itemWithoutId = { ...item };
@@ -354,7 +359,37 @@ class Edgenode extends Contract {
         return hashes.filter(hash => hash !== '');
     }
 
-    // Calculate statistics from sensor data
+    // Create SHA-256 hash of data
+    hashData(data) {
+        return crypto.createHash('sha256').update(data).digest('hex');
+    }
+    
+    // Calculate Merkle Root from array of hashes for data integrity
+    calculateMerkleRoot(hashes) {
+        if (hashes.length === 0) return '';
+        
+        // Build Merkle tree by combining hash pairs
+        while (hashes.length > 1) {
+            let newHashes = [];
+            for (let i = 0; i < hashes.length; i += 2) {
+                if (i + 1 < hashes.length) {
+                    let combinedHash = this.hashPair(hashes[i], hashes[i + 1]);
+                    newHashes.push(combinedHash);
+                } else {
+                    newHashes.push(hashes[i]);
+                }
+            }
+            hashes = newHashes;
+        }
+        return hashes[0];
+    }
+    
+    // Hash a pair of hashes together for Merkle tree construction
+    hashPair(hash1, hash2) {
+        return crypto.createHash('sha256').update(hash1 + hash2).digest('hex');
+    }
+
+     // Calculate statistics from sensor data
     calculateAggregation(data) {
         let sum = { CO2: 0, PM25: 0, VOCs: 0 };
         let count = data.length;
@@ -382,40 +417,6 @@ class Edgenode extends Contract {
                 unit: 'ppm'
             }
         };
-    }
-
-    // Create SHA-256 hash of data
-    hashData(data) {
-        return crypto.createHash('sha256').update(data).digest('hex');
-    }
-    
-    // Calculate Merkle Root from array of hashes for data integrity
-    calculateMerkleRoot(hashes) {
-        console.log('Input hashes:', hashes);
-        if (hashes.length === 0) return '';
-        
-        // Build Merkle tree by combining hash pairs
-        while (hashes.length > 1) {
-            let newHashes = [];
-            for (let i = 0; i < hashes.length; i += 2) {
-                if (i + 1 < hashes.length) {
-                    let combinedHash = this.hashPair(hashes[i], hashes[i + 1]);
-                    console.log(`Combining ${hashes[i]} and ${hashes[i + 1]} = ${combinedHash}`);
-                    newHashes.push(combinedHash);
-                } else {
-                    newHashes.push(hashes[i]);
-                }
-            }
-            hashes = newHashes;
-            console.log('New level of hashes:', hashes);
-        }
-        console.log('Final Merkle root:', hashes[0]);
-        return hashes[0];
-    }
-    
-    // Hash a pair of hashes together for Merkle tree construction
-    hashPair(hash1, hash2) {
-        return crypto.createHash('sha256').update(hash1 + hash2).digest('hex');
     }
 }
 
