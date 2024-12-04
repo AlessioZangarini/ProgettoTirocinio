@@ -8,5 +8,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopSimulation: () => ipcRenderer.invoke('stop-simulation'),
   closeNetwork: () => ipcRenderer.invoke('close-network'),
   onCommandOutput: (callback) => ipcRenderer.on('command-output', callback),
-  onPollutantAlert: (callback) => ipcRenderer.on('pollutant-alert', callback)
+  onPollutantAlert: (callback) => ipcRenderer.on('pollutant-alert', callback),
+  onShowAlert: (callback) => ipcRenderer.on('show-alert', callback)
 });

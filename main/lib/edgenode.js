@@ -271,7 +271,7 @@ class Edgenode extends Contract {
                 
             // If there's data to aggregate
             if (count > 0) {
-                // Set up range query for existing aggregations
+                // Set up key range for existing aggregations
                 const startKey = 'aggregation_';
                 const endKey = 'aggregation_\uffff';
                 const iterator = await ctx.stub.getStateByRange(startKey, endKey);

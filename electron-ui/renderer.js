@@ -41,6 +41,11 @@
     const floorSelect = document.getElementById('location');
     const sensorSelect = document.getElementById('sensor-id');
 
+    // Alert handler
+    window.electronAPI.onShowAlert((event, message) => {
+      appendToTerminal(message, 'alert');
+    });
+
     // Event listener for building selection
     buildingSelect.addEventListener('change', (event) => {
         const selectedBuilding = event.target.value;
@@ -90,7 +95,6 @@
     // Start Simulation button
     document.getElementById('startSimulation').addEventListener('click', () => {
       window.electronAPI.startSimulation();
-      appendToTerminal('Starting simulation...');
     });
 
     // Stop Simulation button

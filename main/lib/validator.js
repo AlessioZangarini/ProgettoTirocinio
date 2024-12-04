@@ -361,7 +361,7 @@ class Validator extends Contract {
                 if (isValid) {
                     validEndorsements++;
                 } else {
-                    /* Log failed detailt
+                    /* Log failed detail
                     console.log('Verification failed. Details:', {
                         dataLength: dataToVerify.length,
                         data: dataToVerify

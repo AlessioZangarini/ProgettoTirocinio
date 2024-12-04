@@ -6,6 +6,7 @@ const { app, BrowserWindow, ipcMain } = require('electron'); // For Electron
 const path = require('path'); // For defining base path
 const { exec } = require('child_process'); // For executing commands
 const util = require('util'); // For various API
+const { error } = require('console');
 const execPromise = util.promisify(exec); // For sequences of operations
 
 // Base path for Fabric samples and network configuration
@@ -19,6 +20,9 @@ const BIN_PATH = path.join(FABRIC_SAMPLES_PATH, 'bin');
 const THRESHOLD_CO2 = 1000;      // CO2 threshold in ppm
 const THRESHOLD_PM = 10;         // Particulate Matter threshold in µg/m³
 const THRESHOLD_FORMALDEHYDE = 0.1; // Formaldehyde threshold in ppm
+
+// Global variable for network initialization
+let isInitialized= false;
 
 // Global variables for simulation control
 let simulationInterval1 = null;  // Interval for regular data registration
@@ -77,6 +81,12 @@ const preparePemKeysAndCerts = async () => {
   }
 };
 
+// Alert component for renderer
+const showAlert = (message) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('show-alert', message);
+  }
+};
 
 // Helper function to convert Windows paths to WSL compatible paths
 function toWSLPath(windowsPath) {
@@ -340,6 +350,7 @@ async function invokeChaincode(funcName, args = []) {
 
 // Start the IoT data simulation process
 function startSimulation() {
+  
   // Check if simulation is already running
   if (isSimulationRunning) {
     console.log('Simulation is already running.');
@@ -383,6 +394,7 @@ function startSimulation() {
 
 // Stop the IoT data simulation
 function stopSimulation() {
+
   // Check if simulation is running
   if (!isSimulationRunning) {
     sendOutputToRenderer('No simulation is currently running.');
@@ -405,6 +417,13 @@ function stopSimulation() {
 
 // Initialize the Hyperledger Fabric network
 async function openNetwork() {
+
+  // Check if the network is already up
+  if(isInitialized){
+    showAlert('Network already initialized');
+    return;
+  }
+
   // Set the path variables for the commands
   const networkScript = path.join(TEST_NETWORK_PATH, 'network.sh');
   const chaincodePath = path.join(BASE_PATH, 'main');
@@ -447,11 +466,19 @@ async function openNetwork() {
     }
   }
   sendOutputToRenderer('All commands executed successfully. Ledger initialized.');
+  isInitialized = true;
 }
-
 
 // Shut down the Hyperledger Fabric network
 async function closeNetwork() {
+
+  // Checks if network is up
+  if(!isInitialized){
+    showAlert('Network not initialized');
+    return;
+  }
+
+  sendOutputToRenderer('Closing network...');
 
   // Set the path variables for the commands
   const networkScript = path.join(TEST_NETWORK_PATH, 'network.sh');
@@ -463,9 +490,11 @@ async function closeNetwork() {
   // Shut down the network with a scipt
   try {
     const { stdout, stderr } = await execPromise(`wsl ${command}`);
-
+    
     // Print the command result
     sendOutputToRenderer(`Output: ${stdout}`);
+    sendOutputToRenderer('Network closed');
+    isInitialized=false;
   } catch (error) {
     sendOutputToRenderer(`Error executing command ${command}: ${error}`);
   }
@@ -495,6 +524,7 @@ app.on('activate', () => {
 // IPC (Inter-Process Communication) event handlers
 // Handle ledger initialization request from renderer
 ipcMain.handle('initializeLedger', async () => {
+
   try{
     sendOutputToRenderer('Initializing Ledger...');
     await openNetwork();
@@ -506,17 +536,38 @@ ipcMain.handle('initializeLedger', async () => {
 
 // Handle simulation start request from renderer
 ipcMain.handle('start-simulation', () => {
+
+  // Check if the network is up
+  if(!isInitialized){
+    showAlert('Network not initialized');
+    return;
+  }
+  sendOutputToRenderer('Starting simulation... ');
   startSimulation();
 });
 
 // Handle simulation stop request from renderer
 ipcMain.handle('stop-simulation', () => {
+
+  // Check if the network is up
+  if(!isInitialized){
+    showAlert('Network not initialized');
+    return;
+  }
+
   stopSimulation();
   sendOutputToRenderer('Simulation stopped');
 });
 
 // Handle chaincode invocation requests from renderer
 ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
+
+    // Check if network is up
+    if (!isInitialized) {
+      showAlert('Network not initialized');
+      return;
+    }
+  
   try {
     const result = await invokeChaincode(funcName, args);
     if(funcName === "registerDataDB"){
@@ -538,10 +589,9 @@ ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
 });
 
 ipcMain.handle('close-network', async () => {
+
   try {
-    sendOutputToRenderer('Closing network...');
     await closeNetwork();
-    return 'Network closed successfully, ledger deleted';
   } catch (error) {
 +    sendOutputToRenderer(`Error closing network: ${error.message}`);
     return `Error closing network: ${error.message}`;
