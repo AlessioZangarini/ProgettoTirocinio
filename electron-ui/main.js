@@ -6,8 +6,11 @@ const { app, BrowserWindow, ipcMain } = require('electron'); // For Electron
 const path = require('path'); // For defining base path
 const { exec } = require('child_process'); // For executing commands
 const util = require('util'); // For various API
-const { error } = require('console');
 const execPromise = util.promisify(exec); // For sequences of operations
+const fs = require('fs');
+
+const NETWORK_STATE_FILE = path.join(__dirname, 'network-state.json');
+
 
 // Base path for Fabric samples and network configuration
 const BASE_PATH = path.join(__dirname, '..');  // Assuming the app is in a subdirectory
@@ -22,7 +25,7 @@ const THRESHOLD_PM = 10;         // Particulate Matter threshold in µg/m³
 const THRESHOLD_FORMALDEHYDE = 0.1; // Formaldehyde threshold in ppm
 
 // Global variable for network initialization
-let isInitialized= false;
+isInitialized = loadNetworkState();
 
 // Global variables for simulation control
 let simulationInterval1 = null;  // Interval for regular data registration
@@ -46,6 +49,21 @@ const orgPaths = {
 
 // Initial directory check in WSL environment
 const wslPath = toWSLPath(FABRIC_SAMPLES_PATH);
+
+// Save network status
+function saveNetworkState(state) {
+  fs.writeFileSync(NETWORK_STATE_FILE, JSON.stringify({ isInitialized: state }));
+}
+
+// Load network status
+function loadNetworkState() {
+  try {
+    const state = fs.readFileSync(NETWORK_STATE_FILE);
+    return JSON.parse(state).isInitialized;
+  } catch {
+    return false;
+  }
+}
 
 // Prepare PEM formatted keys and certificates for both organizations for filesystem compatibility
 const preparePemKeysAndCerts = async () => {
@@ -466,7 +484,10 @@ async function openNetwork() {
     }
   }
   sendOutputToRenderer('All commands executed successfully. Ledger initialized.');
+  
+  //Set network status
   isInitialized = true;
+  saveNetworkState(true);
 }
 
 // Shut down the Hyperledger Fabric network
@@ -494,7 +515,10 @@ async function closeNetwork() {
     // Print the command result
     sendOutputToRenderer(`Output: ${stdout}`);
     sendOutputToRenderer('Network closed');
-    isInitialized=false;
+
+    // Set network status
+    isInitialized = false;
+    saveNetworkState(false);
   } catch (error) {
     sendOutputToRenderer(`Error executing command ${command}: ${error}`);
   }

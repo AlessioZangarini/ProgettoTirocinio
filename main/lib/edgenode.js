@@ -99,7 +99,7 @@ class Edgenode extends Contract {
         }
 
         // MongoDB connection configuration
-        const uri = "mongodb://172.25.208.248:27017";    
+        const uri = "mongodb://host.docker.internal:27017";
         let client;
 
         try {
@@ -161,7 +161,7 @@ class Edgenode extends Contract {
     async getDataDB(ctx) {
 
         // MongoDB connection configuration
-        const uri = "mongodb://172.25.208.248:27017";
+        const uri = "mongodb://host.docker.internal:27017";
         let client;
 
         try {
@@ -191,7 +191,7 @@ class Edgenode extends Contract {
     // Delete all data from MongoDB
     async deleteDataDB(ctx) {
         // MongoDB connection configuration
-        const uri = "mongodb://172.25.208.248:27017";
+        const uri = "mongodb://host.docker.internal:27017";
         let client;
 
         try {
