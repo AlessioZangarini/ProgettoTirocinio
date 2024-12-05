@@ -1,13 +1,45 @@
 ## Iot Environment simulation with Hyperledger Fabric
 
-##Application Requirements for windows
+## Application Requirements for windows
+Remember to set the necessary ambient variables for programs who need them
 - Docker Desktop (https://www.docker.com/products/docker-desktop/)
 - WSL2 (https://www.c-sharpcorner.com/article/how-to-install-windows-subsystem-for-linux-wsl2-on-windows-11/)
 - Curl (https://kb.naverisk.com/en/articles/5569958-how-to-install-curl-in-windows)
 - Node.js (https://nodejs.org/en/download/prebuilt-installer)
 - Git (https://git-scm.com/downloads/win)
+- Jq (https://jqlang.github.io/jq/download/)
+
+
+## MongoDB Setup
+Setup operations for the off-chain DB with MongoDB
+
+1. Install MongoDBServer 
+   - https://www.mongodb.com/try/download/community
+
+2. Set environment variable:
+   - PATH: [Path to MongoDB folder]\MongoDB\Server\7.0\bin
+
+3. Check the cfg file:
+   - Open [Path to MongoDB folder]\MongoDB\Server\7.0\bin\mongod.cfg
+   - Check the network interface line:
+   ```bash
+    # network interfaces
+        net:
+        port: 27017
+        bindIp: 127.0.0.1
+    ```
+            
+Optional steps, for checking DB operations in real time
+
+1. Open MongoDBCompass (if installed)
+
+2. Click on add a new connection
+
+3. Insert the database ip
+   - default ip: mongodb://host.docker.internal:27017
 
 ## Installation
+On WSL2(with administrator priviliges) run the following commands
 
 1. Clone the repository and access the project folder:
 ```bash
@@ -50,23 +82,12 @@ ProgettoTirocinio/
 
 2. Start WSL2 (on windows)
 
-3. Launch the User Interface
+3. Launch the User Interface via WSL2
 ```bash
     cd .\electron-ui\
     npm start
 ```
-
-## MongoDBCompass integration
-It is possible to check the off-chain DB operations in real time with MongoDBCompass
-
-1. Install MongoDBCompass 
-   - https://www.mongodb.com/try/download/compass
-
-2. Click on add a new connection
-
-3. Insert the database ip
-   - default ip: mongodb://172.25.208.248:27017   
-
+ 
 ## Cleanup operation
 It is also possible to clean up the environment variables set by the program
 - Running the cleanup-env.sh
@@ -77,4 +98,5 @@ It is also possible to clean up the environment variables set by the program
         cd ProgettoTirocinio
         bash cleanup.sh
     ```
-        
+
+## Troubleshooting
