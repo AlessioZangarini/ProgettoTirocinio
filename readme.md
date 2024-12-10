@@ -1,17 +1,17 @@
 ## Iot Environment simulation with Hyperledger Fabric
-
-## Application Requirements for Windows / Linux 
-Remember to set the necessary ambient variables for programs who need them
+This is an application for simulating an IoT indoor air quality system that uses Hyperledger Fabric to ensure data confidentiality and integrity.
+## Application requirements for Windows
+Remember to set the necessary environment variables for programs that need them:
 - Docker Desktop (https://www.docker.com/products/docker-desktop/)
-    - requires ambient variables
+    - requires environment variable
 - WSL2 (https://www.c-sharpcorner.com/article/how-to-install-windows-subsystem-for-linux-wsl2-on-windows-11/)
 - Node.js (https://nodejs.org/en/download/prebuilt-installer)
-    - requires ambient variables
+    - requires environment variable
 - Git (https://git-scm.com/downloads/win)
-    - requires ambient variables
+    - requires environment variable
 
-## WSL/Linux Requirements
-WSL/Linux command line tools for the installation and running of the program
+## WSL requirements
+WSL command line tools for the installation and running of the program
 - Curl: 
    ```bash
     sudo apt-get install curl
@@ -27,7 +27,7 @@ Setup operations for the off-chain DB with MongoDB
 1. Install MongoDBServer 
    - https://www.mongodb.com/try/download/community
 
-2. Set environment variable (windows):
+2. Set environment variable:
    - PATH: [Path to MongoDB folder]\MongoDB\Server\7.0\bin
 
 3. Check the cfg file:
@@ -40,7 +40,7 @@ Setup operations for the off-chain DB with MongoDB
         bindIp: 127.0.0.1
     ```
             
-Optional steps, for checking DB operations in real time (windows)
+Optional steps, for checking database operations in real time
 
 1. Open MongoDBCompass (if installed)
 
@@ -96,11 +96,11 @@ ProgettoTirocinio/
 
 1. Start Docker Desktop
 
-2. Start WSL2 (on windows)
+2. Start WSL2
 
 3. Launch the User Interface via WSL2
 ```bash
-    cd .\electron-ui\
+    cd electron-ui
     npm start
 ```
  
@@ -117,8 +117,8 @@ It is also possible to clean up the environment variables set by the program
 ## Troubleshooting
 This section is for addressing eventual errors in the running of the program, known errors are:
 
-1. Error code;  ``` ProgettoTirocinio/fabric-samples/test-network/network.sh: not found``` :
-    - this happens when the WSL ambient is not set/installed correctly
+1. Error code:  ``` ProgettoTirocinio/fabric-samples/test-network/network.sh: not found``` :
+    - this happens when the WSL environment is not set/installed correctly
     - you need to:
         - close the WSL2 terminal 
         - re-open it and run the commands:    
@@ -134,11 +134,11 @@ This section is for addressing eventual errors in the running of the program, kn
           wsl.exe --update
         ```
         - close the WSL and re-run the program
-    - if these steps didn't resolve your issue, ensure the program is installed in a folder which its path doesn't contain spaces; for example:
+    - if these steps didn't resolve your issue, ensure the program is installed in a folder whose path doesn't contain spaces; for example:
         - ```C\Users\[Your Username]\ProgettoTirocinio``` should be fine
         - ```C\Users\OneDrive\[Your Username]\ProgettoTirocinio``` could potentially cause problems, because the folder One Drive contains a space in its name
-    - this happens because the program is built on WSL commands, and WSL could cause problems with folders which contain a space in ther name
-    - if all of these solution didn't solve this issue, contact me
+    - this happens because the program is built on WSL commands, and WSL could cause problems with folders which contain a space in its name
+    - if all of these solutions didn't solve this issue, contact me
 
 2. Error code: ```Error: chaincode argument error: invalid character 'A' looking for beginning of object key string Usage```
     - this happens when an incorrect version of the test network is installed
