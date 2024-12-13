@@ -7,7 +7,7 @@ const path = require('path'); // For defining base path
 const { exec } = require('child_process'); // For executing commands
 const util = require('util'); // For various API
 const execPromise = util.promisify(exec); // For sequences of operations
-const fs = require('fs');
+const fs = require('fs'); // For network operations
 
 const NETWORK_STATE_FILE = path.join(__dirname, 'network-state.json');
 
@@ -19,11 +19,6 @@ const TEST_NETWORK_PATH = path.join(FABRIC_SAMPLES_PATH, 'test-network');
 const CONFIG_PATH = path.join(FABRIC_SAMPLES_PATH, 'config');
 const BIN_PATH = path.join(FABRIC_SAMPLES_PATH, 'bin');
 
-// Environmental thresholds for air quality monitoring
-const THRESHOLD_CO2 = 1000;      // CO2 threshold in ppm
-const THRESHOLD_PM = 10;         // Particulate Matter threshold in µg/m³
-const THRESHOLD_FORMALDEHYDE = 0.1; // Formaldehyde threshold in ppm
-
 // Global variable for network initialization
 isInitialized = loadNetworkState();
 
@@ -34,6 +29,87 @@ let simulationTimeout = null;    // Timeout for simulation duration
 let isSimulationRunning = false; // Flag to track simulation status
 let isAggregatingData = false;   // Flag to prevent concurrent aggregation
 let mainWindow = null;           // Main application window reference
+
+// Load configuration
+const config = loadConfiguration();
+
+// Configuration function
+function loadConfiguration() {
+  try {
+    const configPath = path.join(__dirname, 'config.json');
+    const rawconfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const config = {
+      ...rawconfig,
+      simulation: {
+        dataRegistrationInterval: convertToMilliseconds(
+          rawconfig.simulation.dataRegistration.value, 
+          rawconfig.simulation.dataRegistration.unit
+        ),
+        dataAggregationInterval: convertToMilliseconds(
+          rawconfig.simulation.dataAggregation.value, 
+          rawconfig.simulation.dataAggregation.unit
+        ),
+        simulationDuration: convertToMilliseconds(
+          rawconfig.simulation.simulationDuration.value, 
+          rawconfig.simulation.simulationDuration.unit
+        )
+      }
+    };
+
+    return config;
+  } catch (error) {
+    console.error('Error loading configuration:', error);
+
+    // Fallback to default configuration
+    return {
+      simulation: {
+        dataRegistrationInterval: 30000,
+        dataAggregationInterval: 300000,
+        simulationDuration: 1800000
+      },
+      thresholdAlerts: {
+        autoRegisterExceededData: false,
+        applyThresholdsToSimulation: false                     
+      },
+      networkManagement: {
+        autoCloseOnExit: false
+      },
+      pollutantThresholds: {
+        co2: { threshold: 2000 },
+        pm: { threshold: 10 },
+        formaldehyde: { threshold: 0.1 }
+      }
+    };
+  }
+}  
+
+// Time unit conversion utility
+function convertToMilliseconds(value, unit) {
+
+  // Validate inputs
+  const numValue = Number(value);
+  if (isNaN(numValue)) {
+    throw new Error(`Invalid time value: ${value}`);
+  }
+
+  // Convert to milliseconds based on unit
+  switch (unit.toLowerCase()) {
+    case 'milliseconds':
+    case 'millisecond':
+      return numValue;
+    case 'seconds':
+    case 'second':
+      return numValue * 1000;
+    case 'minutes':
+    case 'minute':
+      return numValue * 60 * 1000;
+    case 'hours':
+    case 'hour':
+      return numValue * 60 * 60 * 1000;
+    default:
+      throw new Error(`Unsupported time unit: ${unit}`);
+  }
+}
 
 // Define paths for organization keys and certificates necessary for validation
 const orgPaths = {
@@ -241,21 +317,100 @@ function execWSLCommand(command) {
 }
 
 // Check if pollutant values exceed thresholds
-function checkThreshold(args) {
+function checkThreshold(args, forceCheck = false) {
   // Get the pollutant parameters
   const [, , , co2, pm, formaldehyde] = args.map(Number);
-  
-  // Check each pollutant against its threshold
-  if (co2 > THRESHOLD_CO2) {
-    sendAlertToRenderer('CO2', co2, THRESHOLD_CO2);
+
+  // Get the pollutant thresholds
+  const thresholds = config.pollutantThresholds;
+  const applyThresholds = forceCheck || config.thresholdAlerts.applyThresholdsToSimulation;
+
+  let thresholdExceeded = false;
+
+  // Check for threshold application
+  if (applyThresholds) {
+    if (co2 > thresholds.co2.threshold) {
+      sendAlertToRenderer('CO2', co2, thresholds.co2.threshold);
+      thresholdExceeded = true;
+    }
+    if (pm > thresholds.pm.threshold) {
+      sendAlertToRenderer('PM', pm, thresholds.pm.threshold);
+      thresholdExceeded = true;
+    }
+    if (formaldehyde > thresholds.formaldehyde.threshold) {
+      sendAlertToRenderer('Formaldehyde', formaldehyde, thresholds.formaldehyde.threshold);
+      thresholdExceeded = true;
+    }
   }
-  if (pm > THRESHOLD_PM) {
-    sendAlertToRenderer('PM', pm, THRESHOLD_PM);
-  }
-  if (formaldehyde > THRESHOLD_FORMALDEHYDE) {
-    sendAlertToRenderer('Formaldehyde', formaldehyde, THRESHOLD_FORMALDEHYDE);
-  }
+
+  return thresholdExceeded;
 }
+
+// Function to simulate sensor data 
+function simulateData() {
+  const randomInRange = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+  // Sensor IDs and floors
+  const sensorIds = {
+    Building_1: {
+      '1st floor': ['M01', 'M02', 'M03'],
+      '2nd floor': ['M04', 'M05', 'M06'],
+      '3rd floor': ['M07', 'M08'],
+      '4th floor': ['X09', 'X10', 'X11']
+    },
+    Building_2: {
+      '1st floor': ['Y01', 'Y02', 'Y03'],
+      '2nd floor': ['Y04', 'Y05', 'Y06'],
+      '3rd floor': ['Y07', 'Y08', 'Y09']
+    },
+    Building_3: {
+      '1st floor': ['U01', 'U02', 'U03'],
+      '2nd floor': ['U04', 'U05', 'U06']
+    },
+    Building_4: {
+      '1st floor': ['P01', 'P02', 'P03'],
+      '2nd floor': ['P04', 'P05', 'P06'],
+      '3rd floor': ['P07', 'P08', 'P09']
+    }
+  };
+
+  // Randomize sensor location
+  const buildings = Object.keys(sensorIds);
+  const randomBuilding = buildings[randomInRange(0, buildings.length - 1)];
+  const floors = Object.keys(sensorIds[randomBuilding]);
+  const randomFloor = floors[randomInRange(0, floors.length - 1)];
+  const possibleIds = sensorIds[randomBuilding][randomFloor];
+  const sensorId = possibleIds[randomInRange(0, possibleIds.length - 1)];
+
+  // Check configuration file
+  const thresholds = config.pollutantThresholds;
+  const applyThresholds = config.thresholdAlerts.applyThresholdsToSimulation;
+
+  return {
+    timestamp: new Date().toISOString(),
+    sensorId: sensorId,
+    location: `${randomBuilding}, ${randomFloor}`,
+    CO2: {
+      value: applyThresholds 
+        ? randomInRange(400, thresholds.co2.threshold) 
+        : randomInRange(400, 2500),  
+      unit: 'ppm'
+    },
+    PM25: {
+      value: applyThresholds
+        ? Math.round(Math.random() * thresholds.pm.threshold * 100) / 100
+        : Math.round(Math.random() * 50 * 100) / 100, 
+      unit: 'ug/m3'
+    },
+    VOCs: {
+      value: applyThresholds
+        ? Math.round(Math.random() * thresholds.formaldehyde.threshold * 1000) / 1000
+        : Math.round(Math.random() * 1 * 1000) / 1000, 
+      unit: 'ppm'
+    }
+  };
+}
+
 
 // Main function to invoke chaincode operations
 // Handles different chaincode functions with appropriate configurations and parameters
@@ -304,7 +459,7 @@ async function invokeChaincode(funcName, args = []) {
     const stringArgs = paddedArgs.map(arg => arg.toString());
     sendOutputToRenderer('Calling registerDataDB...');
     command += `-c '{"function":"registerDataDB","Args":${JSON.stringify(stringArgs)}}'`;
-    // Check if any environmental thresholds are exceeded
+    // Check if thresholds are exceeded
     checkThreshold(args);
   } 
   // Handle data aggregation function
@@ -368,30 +523,41 @@ async function invokeChaincode(funcName, args = []) {
 
 // Start the IoT data simulation process
 function startSimulation() {
-  
-  // Check if simulation is already running
   if (isSimulationRunning) {
-    console.log('Simulation is already running.');
     sendOutputToRenderer('Simulation is already running.');
     return;
   }
 
   isSimulationRunning = true;
 
-  // Initial data registration
-  invokeChaincode('registerDataDB');
-  sendOutputToRenderer('Data registered')
-
-  // Set up periodic data registration (every 30 seconds)
+  // Use intervals from configuration
   simulationInterval1 = setInterval(async () => {
     if (!isAggregatingData) {
-      await invokeChaincode('registerDataDB');
+      
+      // Simulate Data
+      const simulatedData = simulateData();
+        args = [
+          simulatedData.sensorId,
+          simulatedData.location.split(", ")[0], 
+          simulatedData.location.split(", ")[1], 
+          simulatedData.CO2.value.toString(),
+          simulatedData.PM25.value.toString(),
+          simulatedData.VOCs.value.toString()
+        ];
+
+      // Check Thresholds
+      const exceedAlert = checkThreshold(args);
+
+      // Check for user preference
+      if (exceedAlert && !config.thresholdAlerts.autoRegisterExceededData) {
+        return "Threshold exceeded. Data not registered.";
+      }
+      await invokeChaincode('registerDataDB', args);
     } else {
       sendOutputToRenderer('Skipping registerDataDB due to ongoing data aggregation.');
     }
-  }, 30000);
+  }, config.simulation.dataRegistrationInterval);
 
-  // Set up periodic data aggregation (every 5 minutes)
   simulationInterval2 = setInterval(async () => {
     if (!isAggregatingData) {
       isAggregatingData = true;
@@ -401,13 +567,13 @@ function startSimulation() {
     } else {
       sendOutputToRenderer('Skipping aggregateData due to ongoing data aggregation.');
     }
-  }, 300000); // 5 minutes in milliseconds
+  }, config.simulation.dataAggregationInterval);
 
-  // Set simulation timeout (30 minutes)
+  // Use simulation duration from configuration
   simulationTimeout = setTimeout(() => {
-    sendOutputToRenderer('Stopping simulation after 30 minutes...');
+    sendOutputToRenderer('Stopping simulation after configured duration...');
     stopSimulation();
-  }, 1800000); // 30 minutes in milliseconds
+  }, config.simulation.simulationDuration);
 }
 
 // Stop the IoT data simulation
@@ -531,10 +697,15 @@ app.on('ready', createWindow);
 // Handle application shutdown
 app.on('window-all-closed', async () => {
   if (process.platform !== 'darwin') {
-    // Optional, if you want to delete the ledger when the window closes
-    /*
-    await closeNetwork();
-    app.quit();*/
+    // Checks for user preference
+    if (config.networkManagement.autoCloseOnExit) {
+        try {
+          await closeNetwork();
+        } catch (error) {
+          console.error('Error during  network shutdown:', error);
+        }
+      app.quit();
+    }
   }
 });
 
@@ -593,11 +764,35 @@ ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
     }
   
   try {
-    const result = await invokeChaincode(funcName, args);
-    if(funcName === "registerDataDB"){
-      sendOutputToRenderer('Data registered');
+    if (funcName === "registerDataDB") {
+      const hasMissingArgs = args.some(arg => arg === "" || arg === undefined || arg === null);
+      const forceThresholdCheck = !hasMissingArgs;
+
+      //Check if data is provided
+      if (hasMissingArgs) {
+        const simulatedData = simulateData();
+        args = [
+          simulatedData.sensorId,
+          simulatedData.location.split(", ")[0], 
+          simulatedData.location.split(", ")[1], 
+          simulatedData.CO2.value.toString(),
+          simulatedData.PM25.value.toString(),
+          simulatedData.VOCs.value.toString()
+        ];
+      }
+
+      // Check thresholds
+      const exceedAlert = checkThreshold(args, forceThresholdCheck);
+
+      // Check for user preference
+      if (exceedAlert && !config.thresholdAlerts.autoRegisterExceededData) {
+        return "Threshold exceeded. Data not registered.";
+      }
+      const result = await invokeChaincode(funcName, args);
+      return result;
     }
-    else if(funcName=="aggregateData"){
+    const result = await invokeChaincode(funcName, args);
+    if(funcName=="aggregateData"){
       sendOutputToRenderer('Data aggregated');
     }
     else if(funcName=="deleteDataDB"){

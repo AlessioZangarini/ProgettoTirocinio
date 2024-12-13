@@ -15,93 +15,30 @@ class Edgenode extends Contract {
         // Get transaction timestamp for consistent timing
         const txTimestamp = ctx.stub.getTxTimestamp();
         const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
-        let data;
     
-        // If no parameters provided, generate simulated data
-        if (id === "" || build === "" || floor === "" || CO2 === "" || PM25 === "" || VOCs === "") {
-            // Use transaction timestamp as seed for deterministic random generation
-            const seed = txTimestamp.seconds.low;
-            const random = require('seedrandom')(seed);
-        
-            // Random number generation within a range
-            const randomInRange = (min, max) => Math.floor(random() * (max - min + 1)) + min;
-        
-            // Sensor IDs and their locations across different buildings
-            const sensorIds = {
-                Building_1: {
-                    '1st floor': ['M01', 'M02', 'M03'],
-                    '2nd floor': ['M04', 'M05', 'M06'],
-                    '3rd floor': ['M07', 'M08'],
-                    '4th floor': ['X09', 'X10', 'X11']
-                },
-                Building_2: {
-                    '1st floor': ['Y01', 'Y02', 'Y03'],
-                    '2nd floor': ['Y04', 'Y05', 'Y06'],
-                    '3rd floor': ['Y07', 'Y08', 'Y09']
-                },
-                Building_3: {
-                    '1st floor': ['U01', 'U02', 'U03'],
-                    '2nd floor': ['U04', 'U05', 'U06']
-                },
-                Building_4: {
-                    '1st floor': ['P01', 'P02', 'P03'],
-                    '2nd floor': ['P04', 'P05', 'P06'],
-                    '3rd floor': ['P07', 'P08', 'P09']
-                }
-            };
-        
-            // Random selection of building and floor
-            const buildings = Object.keys(sensorIds);
-            const randomBuilding = buildings[randomInRange(0, buildings.length - 1)];
-            const floors = Object.keys(sensorIds[randomBuilding]);
-            const randomFloor = floors[randomInRange(0, floors.length - 1)];
-            const possibleIds = sensorIds[randomBuilding][randomFloor];
-            const sensorId = possibleIds[randomInRange(0, possibleIds.length - 1)];
-        
-            // Generate simulated data
-            data = {
-                timestamp: timestamp,
-                sensorId: sensorId,
-                location: `${randomBuilding}, ${randomFloor}`,
-                CO2: {
-                    value: randomInRange(400, 1200),
-                    unit: 'ppm'
-                },
-                PM25: {
-                    value: Math.round(random() * 20 * 100) / 100,
-                    unit: 'ug/m3'
-                },
-                VOCs: {
-                    value: Math.round(random() * 0.2 * 1000) / 1000,
-                    unit: 'ppm'
-                }
-            };
-
-         // Use provided parameters for data creation with units
-        } else {
-            data = {
-                timestamp: timestamp,
-                sensorId: id,
-                location: `${build}, ${floor}`,
-                CO2: {
-                    value: parseInt(CO2),
-                    unit: 'ppm'
-                },
-                PM25: {
-                    value: parseFloat(PM25),
-                    unit: 'ug/m3'
-                },
-                VOCs: {
-                    value: parseFloat(VOCs),
-                    unit: 'ppm'
-                }
-            };
-        }
-
+        // Use provided parameters
+        const data = {
+            timestamp: timestamp,
+            sensorId: id,
+            location: `${build}, ${floor}`,
+            CO2: {
+                value: parseInt(CO2),
+                unit: 'ppm'
+            },
+            PM25: {
+                value: parseFloat(PM25),
+                unit: 'ug/m3'
+            },
+            VOCs: {
+                value: parseFloat(VOCs),
+                unit: 'ppm'
+            }
+        };
+    
         // MongoDB connection configuration
         const uri = "mongodb://host.docker.internal:27017";
         let client;
-
+    
         try {
             // Connect to MongoDB with timeout
             client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
@@ -127,10 +64,10 @@ class Edgenode extends Contract {
             // Update Merkle tree with new hash
             let dataHashes = await this.getDataHashes(ctx);
             dataHashes.push(dataHash);
-        
+    
             // Calculate new Merkle root
             let merkleRoot = this.calculateMerkleRoot(dataHashes);
-        
+    
             // Store updated Merkle root and hashes
             await ctx.stub.putState('MerkleRoot', Buffer.from(merkleRoot));
             await ctx.stub.putState('DataHashes', Buffer.from(JSON.stringify(dataHashes)));
@@ -145,7 +82,7 @@ class Edgenode extends Contract {
             }
         }
     }
-
+    
     // Query all data stored in the system
     async queryAllData(ctx) {
         try {
