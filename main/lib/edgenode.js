@@ -10,107 +10,106 @@ const { MongoClient } = require('mongodb');
 class Edgenode extends Contract {
 
     // Register IoT sensor data both in MongoDB and on the blockchain
-   async registerDataDB(ctx, id, build, floor, CO2, PM25, VOCs) {
+    async registerDataDB(ctx, id, build, floor, CO2, PM25, VOCs) {
 
-    // MongoDB connection configuration
-    const uri = "mongodb://host.docker.internal:27017";
-    let client; 
+        // Setup database connection
+        const uri = "mongodb://host.docker.internal:27017";
+        let client;
     
-     // Get transaction timestamp for consistent timing
-    const txTimestamp = ctx.stub.getTxTimestamp();
-    const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
-
-    // Use provided parameters
-    const data = {
-        timestamp: timestamp,
-        sensorId: id,
-        location: `${build}, ${floor}`,
-        CO2: {
-            value: parseInt(CO2),
-            unit: 'ppm'
-        },
-        PM25: {
-            value: parseFloat(PM25),
-            unit: 'ug/m3'
-        },
-        VOCs: {
-            value: parseFloat(VOCs),
-            unit: 'ppm'
-        }
-    };
-    
-    try {
-
-        // Connect to MongoDB with timeout
-        client = new MongoClient(uri, { 
-            serverSelectionTimeoutMS: 5000,
-            retryWrites: true,
-            writeConcern: { w: 'majority' }
-        });
-        await client.connect();
-
-        // Access database and collection
-        const database = client.db("iotDataDB");
-        const collection = database.collection("iotData");
+        // Get transaction timestamp
+        const txTimestamp = ctx.stub.getTxTimestamp();
+        const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
         
-        // Create an index to avoid duplication
-        await collection.createIndex(
-            { timestamp: 1, sensorId: 1 }, 
-            { 
-                unique: true,
-                background: true
+        // Use received data
+        const data = {
+            timestamp: timestamp,
+            sensorId: id,
+            location: `${build}, ${floor}`,
+            CO2: {
+                value: parseInt(CO2),
+                unit: 'ppm'
+            },
+            PM25: {
+                value: parseFloat(PM25),
+                unit: 'ug/m3'
+            },
+            VOCs: {
+                value: parseFloat(VOCs),
+                unit: 'ppm'
             }
-        );
-
-        // Insert data into MongoDB with replacement to avoid duplication
-        await collection.replaceOne(
-            { timestamp: data.timestamp, sensorId: data.sensorId }, 
-            data, 
-            { upsert: true }
-        );
-
-        // Remove MongoDB-specific id before blockchain storage
-        delete data._id;
-
-        // Calculate data hash for blockchain storage
-        const dataHash = this.hashData(JSON.stringify(data));
-        const dataKey = ctx.stub.createCompositeKey('Data', [data.timestamp]);
-
-        // Store data hash in the ledger
-        await ctx.stub.putState(dataKey, Buffer.from(JSON.stringify(data)));
-
-        // Update Merkle tree with new hash
-        let dataHashes = await this.getDataHashes(ctx);
-        dataHashes.push(dataHash);
-
-        // Calculate new Merkle root
-        let merkleRoot = this.calculateMerkleRoot(dataHashes);
-
-        // Store updated Merkle root and hashes
-        await ctx.stub.putState('MerkleRoot', Buffer.from(merkleRoot));
-        await ctx.stub.putState('DataHashes', Buffer.from(JSON.stringify(dataHashes)));
-
-        return JSON.stringify(data);
-    } catch (err) {     
-        if (err.code === 11000) {
-            console.log('Data duplication occurred');
-            return JSON.stringify(data);
-        }
-    } finally {
-        if (client) {
-            await client.close();
-        }
-    }
-}
+        };
     
-    // Query all data stored in the system
-    async queryAllData(ctx) {
         try {
-            const results = await this.getDataDB(ctx);
-            return JSON.stringify(results);
+
+            // Connect to the database
+            client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000, retryWrites: true, writeConcern: { w: 'majority' } });
+            await client.connect();
+    
+            // Access database and collections
+            const database = client.db("iotDataDB");
+            const dataCollection = database.collection("iotData");
+            const hashesCollection = database.collection("metadata");
+    
+            // Create index to avoid duplicates in data collection
+            await dataCollection.createIndex(
+                { timestamp: 1, sensorId: 1 },
+                {
+                    unique: true,
+                    background: true
+                }
+            );
+    
+            // Insert or replace the data in the data collection
+            await dataCollection.replaceOne(
+                { timestamp: data.timestamp, sensorId: data.sensorId },
+                data,
+                { upsert: true }
+            );
+    
+            // Remove MongoDB-specific _id before storing in blockchain
+            delete data._id;
+    
+            // Calculate data hash and composite key
+            const dataHash = this.hashData(JSON.stringify(data));
+            const dataKey = ctx.stub.createCompositeKey('Data', [data.timestamp]);
+    
+            // Store data hash in the ledger
+            await ctx.stub.putState(dataKey, Buffer.from(JSON.stringify(data)));
+    
+            // Get current data hashes
+            let dataHashes = await this.getDataHashes(ctx);
+    
+            // Add the new hash to the list
+            if (!dataHashes.includes(dataHash)) {
+                dataHashes.push(dataHash);
+            }
+        
+            // Store the hashes in the database
+            await hashesCollection.replaceOne(
+                { key: 'DataHashes' },
+                { key: 'DataHashes', value: JSON.stringify(dataHashes) },
+                { upsert: true }
+            );
+
+            // Calculate the merkle root
+            const merkleRoot = this.calculateMerkleRoot(dataHashes);
+
+            // Store the merkle root in the database
+            await hashesCollection.replaceOne(
+                { key: 'MerkleRoot' },
+                { key: 'MerkleRoot', value: merkleRoot },
+                { upsert: true }
+            );
+            return JSON.stringify(data);
         } catch (err) {
-            console.error('Error in queryAllData:', err);
-            throw err;
+            if (err.code === 11000) {
+                console.log('Data duplication occurred');
+                return JSON.stringify(data);
+            }
+        } finally {
+            if (client) {
+                await client.close();
+            }
         }
     }
     
@@ -123,7 +122,7 @@ class Edgenode extends Contract {
 
         try {
 
-             // Connect to MongoDB with timeout
+            // Connect to MongoDB with timeout
             client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
             await client.connect();
             
@@ -147,24 +146,32 @@ class Edgenode extends Contract {
 
     // Delete all data from MongoDB
     async deleteDataDB(ctx) {
-        // MongoDB connection configuration
+
+        // Setup database connection
         const uri = "mongodb://host.docker.internal:27017";
         let client;
-
         try {
 
-            // Connect to MongoDB with timeout
-            client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
+            // Connect to the database
+            client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000, retryWrites: true, writeConcern: { w: 'majority' } });
             await client.connect();
-
-            // Access database and collection
-            const database = client.db('iotDataDB');
-            const collection = database.collection('iotData');
-            
-            // Remove all documents
-            await collection.deleteMany({});
+    
+            // Access database and collections
+            const database = client.db("iotDataDB");
+            const dataCollection = database.collection("iotData");
+            const hashesCollection = database.collection("metadata");
+    
+            // Delete all data from iotData collection
+            await dataCollection.deleteMany({});
+    
+            // Delete metadata (dataHashes and MerkleRoot)
+            await hashesCollection.deleteOne({ key: 'DataHashes' });
+            await hashesCollection.deleteOne({ key: 'MerkleRoot' });
+    
+            return { status: 'All data deleted, dataHashes and MerkleRoot removed' };
         } catch (err) {
-            throw err;
+            console.error('Error deleting data:', err);
+            throw new Error('Error deleting data');
         } finally {
             if (client) {
                 await client.close();
@@ -195,112 +202,86 @@ class Edgenode extends Contract {
 
     // Aggregate sensor data and verify data integrity
     async aggregateData(ctx) {
+
+        // Setup database connection
+        const uri = "mongodb://host.docker.internal:27017";
+        let client;
+    
         try {
-            // Get current timestamp and last aggregation time
-            let currentTime = ctx.stub.getTxTimestamp().seconds.low * 1000;
-            let lastAggregation = parseInt((await ctx.stub.getState('LastAggregation')).toString() || '0');
+
+            // Connect to the database
+            client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
+            await client.connect();
             
-            // Get all sensor data from the ledger
-            const sensorDataArray = await this.getDataDB(ctx);
+            // Access database and collections
+            const database = client.db("iotDataDB");
+            const dataCollection = database.collection("iotData");
+            const hashesCollection = database.collection("metadata");
+    
+            // Recover sensor data
+            const sensorDataArray = await dataCollection.find({}).toArray();
             
-            // Check if enough time has passed since last aggregation (15 minutes)
-            if (currentTime - lastAggregation < 900 * 1000) {
-                return JSON.stringify({ error: "Not enough time has passed to aggregate data" });
-            }
-            
-            // Initialize aggregation variables
-            let totalCO2 = 0;
-            let totalPM25 = 0;
-            let totalVOCs = 0;
-            let count = 0;
-     
-            // Sum up all sensor values
-            for (const sensorData of sensorDataArray) {
-                try {
-                    totalCO2 += sensorData.CO2.value;
-                    totalPM25 += sensorData.PM25.value;
-                    totalVOCs += sensorData.VOCs.value;
-                    count += 1;
-                } catch (err) {
-                    throw(err);
-                }
-            }
-                
-            // If there's data to aggregate
-            if (count > 0) {
-                // Set up key range for existing aggregations
-                const startKey = 'aggregation_';
-                const endKey = 'aggregation_\uffff';
-                const iterator = await ctx.stub.getStateByRange(startKey, endKey);
-                let maxAggregationNumber = 0;
-                let hasExistingAggregations = false;
-     
-                // Iterate through existing aggregations to find highest number
-                let result = await iterator.next();
-                while (!result.done) {
-                    hasExistingAggregations = true; 
-                    try {
-                        const value = result.value.value.toString('utf8');
-                        const aggregation = JSON.parse(value);
-                        if (aggregation.aggregationNumber) {
-                            maxAggregationNumber = Math.max(maxAggregationNumber, aggregation.aggregationNumber);
-                        }
-                    } catch (err) {
-                        throw(err);
-                    }
-                    result = await iterator.next();
-                }
-                await iterator.close();
-     
-                // Calculate new aggregation number and timestamp
-                const aggregationNumber = hasExistingAggregations ? maxAggregationNumber + 1 : 1;
-                const txTimestamp = ctx.stub.getTxTimestamp();
-                const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
-     
-                // Create aggregated data object with averages
-                const aggregatedData = {
-                    aggregationNumber: aggregationNumber,
-                    avgCO2: {
-                        value: totalCO2 / count,
-                        unit: 'ppm'
-                    },
-                    avgPM25: {
-                        value: totalPM25 / count,
-                        unit: 'ug/m3'
-                    },
-                    avgVOCs: {
-                        value: totalVOCs / count,
-                        unit: 'ppm'
-                    },
-                    count: count,
-                    timestamp: timestamp
-                };
-     
-                // Create unique ID for this aggregation
-                const aggregationId = `aggregation_${aggregationNumber}_${timestamp}`;
-        
-                // Store aggregated data in the ledger
-                await ctx.stub.putState(aggregationId, Buffer.from(JSON.stringify(aggregatedData)));
-                // Delete original sensor data after aggregation
-                await this.deleteDataDB(ctx);
-     
-                // Return success message with aggregation details
-                return JSON.stringify({ 
-                    message: "Data aggregated successfully", 
-                    id: aggregationId,
-                    aggregationNumber: aggregationNumber
-                });
-            } else {
-                // Return error if no data to aggregate
+            // Check if data is available
+            if (sensorDataArray.length === 0) {
                 return JSON.stringify({ error: "No data available for aggregation" });
             }
-     
-        } catch (error) {
-            // Return any errors that occurred during aggregation
-            return JSON.stringify({ error: `Error aggregating data: ${error.message}` });
+    
+            // Recover data hashes
+            const allHashes = await hashesCollection.findOne({ key: 'DataHashes' });
+            const dataHashes = JSON.parse(allHashes.value);
+    
+            // Re-calculate merkle root
+            const recalculatedMerkleRoot = this.calculateMerkleRoot(dataHashes);
+    
+            // Verify integrity
+            const latestMerkle = await hashesCollection.findOne({ key: 'MerkleRoot' });
+            if (latestMerkle && latestMerkle.value !== recalculatedMerkleRoot) {
+                throw new Error("Data integrity check failed: Merkle roots do not match.");
+            }
+    
+            // Aggregate data
+            let totalCO2 = 0, totalPM25 = 0, totalVOCs = 0, count = 0;
+            for (const sensorData of sensorDataArray) {
+                totalCO2 += sensorData.CO2.value;
+                totalPM25 += sensorData.PM25.value;
+                totalVOCs += sensorData.VOCs.value;
+                count++;
+            }
+            
+            // Set aggregation data
+            const aggregationNumber = (await this.getCurrentCounter(ctx)) + 1;
+            const txTimestamp = ctx.stub.getTxTimestamp();
+            const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
+            const aggregatedData = {
+                aggregationNumber: aggregationNumber,
+                avgCO2: { value: totalCO2 / count, unit: 'ppm' },
+                avgPM25: { value: totalPM25 / count, unit: 'ug/m3' },
+                avgVOCs: { value: totalVOCs / count, unit: 'ppm' },
+                count: count,
+                timestamp: timestamp
+            };
+            
+            // Set ID
+            const aggregationId = `aggregation_${aggregationNumber}_${timestamp}`;
+            await ctx.stub.putState(aggregationId, Buffer.from(JSON.stringify(aggregatedData)));
+    
+            // Clean the database
+            await this.deleteDataDB(ctx);
+    
+            return JSON.stringify({
+                message: "Data aggregated successfully",
+                id: aggregationId,
+                aggregationNumber: aggregationNumber
+            });
+        } catch (err) {
+            return JSON.stringify({ error: `Error aggregating data: ${err.message}` });
+        } finally {
+            if (client) {
+                await client.close();
+            }
         }
     }
-
+    
     // Get hashes of all data in MongoDB
     async getDataHashes(ctx) {
         const data = await this.getDataDB(ctx);
@@ -321,11 +302,11 @@ class Edgenode extends Contract {
         return crypto.createHash('sha256').update(data).digest('hex');
     }
     
-    // Calculate Merkle Root from array of hashes for data integrity
+    // Calculate merkle root from array of hashes for data integrity
     calculateMerkleRoot(hashes) {
         if (hashes.length === 0) return '';
         
-        // Build Merkle tree by combining hash pairs
+        // Build merkle tree by combining hash pairs
         while (hashes.length > 1) {
             let newHashes = [];
             for (let i = 0; i < hashes.length; i += 2) {
@@ -341,7 +322,7 @@ class Edgenode extends Contract {
         return hashes[0];
     }
     
-    // Hash a pair of hashes together for Merkle tree construction
+    // Hash a pair of hashes together for merkle tree construction
     hashPair(hash1, hash2) {
         return crypto.createHash('sha256').update(hash1 + hash2).digest('hex');
     }
