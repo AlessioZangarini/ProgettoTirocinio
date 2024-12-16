@@ -10,78 +10,98 @@ const { MongoClient } = require('mongodb');
 class Edgenode extends Contract {
 
     // Register IoT sensor data both in MongoDB and on the blockchain
-    async registerDataDB(ctx, id, build, floor, CO2, PM25, VOCs) {
+   async registerDataDB(ctx, id, build, floor, CO2, PM25, VOCs) {
 
-        // Get transaction timestamp for consistent timing
-        const txTimestamp = ctx.stub.getTxTimestamp();
-        const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
+    // MongoDB connection configuration
+    const uri = "mongodb://host.docker.internal:27017";
+    let client; 
     
-        // Use provided parameters
-        const data = {
-            timestamp: timestamp,
-            sensorId: id,
-            location: `${build}, ${floor}`,
-            CO2: {
-                value: parseInt(CO2),
-                unit: 'ppm'
-            },
-            PM25: {
-                value: parseFloat(PM25),
-                unit: 'ug/m3'
-            },
-            VOCs: {
-                value: parseFloat(VOCs),
-                unit: 'ppm'
+     // Get transaction timestamp for consistent timing
+    const txTimestamp = ctx.stub.getTxTimestamp();
+    const timestamp = new Date(txTimestamp.seconds.low * 1000).toISOString();
+
+    // Use provided parameters
+    const data = {
+        timestamp: timestamp,
+        sensorId: id,
+        location: `${build}, ${floor}`,
+        CO2: {
+            value: parseInt(CO2),
+            unit: 'ppm'
+        },
+        PM25: {
+            value: parseFloat(PM25),
+            unit: 'ug/m3'
+        },
+        VOCs: {
+            value: parseFloat(VOCs),
+            unit: 'ppm'
+        }
+    };
+    
+    try {
+
+        // Connect to MongoDB with timeout
+        client = new MongoClient(uri, { 
+            serverSelectionTimeoutMS: 5000,
+            retryWrites: true,
+            writeConcern: { w: 'majority' }
+        });
+        await client.connect();
+
+        // Access database and collection
+        const database = client.db("iotDataDB");
+        const collection = database.collection("iotData");
+        
+        // Create an index to avoid duplication
+        await collection.createIndex(
+            { timestamp: 1, sensorId: 1 }, 
+            { 
+                unique: true,
+                background: true
             }
-        };
-    
-        // MongoDB connection configuration
-        const uri = "mongodb://host.docker.internal:27017";
-        let client;
-    
-        try {
-            // Connect to MongoDB with timeout
-            client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
-            await client.connect();
-    
-            // Access database and collection
-            const database = client.db("iotDataDB");
-            const collection = database.collection("iotData");
-    
-            // Insert data into MongoDB
-            await collection.insertOne(data);
-    
-            // Remove MongoDB-specific id before blockchain storage
-            delete data._id;
-    
-            // Calculate data hash for blockchain storage
-            const dataHash = this.hashData(JSON.stringify(data));
-            const dataKey = ctx.stub.createCompositeKey('Data', [data.timestamp]);
-    
-            // Store data hash in the ledger
-            await ctx.stub.putState(dataKey, Buffer.from(JSON.stringify(data)));
-    
-            // Update Merkle tree with new hash
-            let dataHashes = await this.getDataHashes(ctx);
-            dataHashes.push(dataHash);
-    
-            // Calculate new Merkle root
-            let merkleRoot = this.calculateMerkleRoot(dataHashes);
-    
-            // Store updated Merkle root and hashes
-            await ctx.stub.putState('MerkleRoot', Buffer.from(merkleRoot));
-            await ctx.stub.putState('DataHashes', Buffer.from(JSON.stringify(dataHashes)));
-    
+        );
+
+        // Insert data into MongoDB with replacement to avoid duplication
+        await collection.replaceOne(
+            { timestamp: data.timestamp, sensorId: data.sensorId }, 
+            data, 
+            { upsert: true }
+        );
+
+        // Remove MongoDB-specific id before blockchain storage
+        delete data._id;
+
+        // Calculate data hash for blockchain storage
+        const dataHash = this.hashData(JSON.stringify(data));
+        const dataKey = ctx.stub.createCompositeKey('Data', [data.timestamp]);
+
+        // Store data hash in the ledger
+        await ctx.stub.putState(dataKey, Buffer.from(JSON.stringify(data)));
+
+        // Update Merkle tree with new hash
+        let dataHashes = await this.getDataHashes(ctx);
+        dataHashes.push(dataHash);
+
+        // Calculate new Merkle root
+        let merkleRoot = this.calculateMerkleRoot(dataHashes);
+
+        // Store updated Merkle root and hashes
+        await ctx.stub.putState('MerkleRoot', Buffer.from(merkleRoot));
+        await ctx.stub.putState('DataHashes', Buffer.from(JSON.stringify(dataHashes)));
+
+        return JSON.stringify(data);
+    } catch (err) {     
+        if (err.code === 11000) {
+            console.log('Data duplication occurred');
             return JSON.stringify(data);
-        } catch (err) {
-            throw err;
-        } finally {
-            // Ensure MongoDB connection is closed
-            if (client) {
-                await client.close();
-            }
+        }
+    } finally {
+        if (client) {
+            await client.close();
         }
     }
+}
     
     // Query all data stored in the system
     async queryAllData(ctx) {
