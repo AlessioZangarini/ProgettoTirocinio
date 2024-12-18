@@ -211,9 +211,27 @@ class Edgenode extends Contract {
             if (sensorDataArray.length === 0) {
                 return JSON.stringify({ error: "No data available for aggregation" });
             }
+
+            // Setup delay variable
+            const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+        
+            // Setup recovering retries
+            let retryCount = 0;
+            const maxRetries = 3;
+            let storedMerkleRoot = null;
+            
+            // Try to recover the merkle root
+            while (retryCount < maxRetries) {
+                await delay(2000);
+                storedMerkleRoot = await this.queryMerkleRoot(ctx);
+                if (storedMerkleRoot && storedMerkleRoot.merkleRoot) {
+                    break;
+                }
+                retryCount++;
+                console.log(`Attempt ${retryCount}/${maxRetries} to retrieve Merkle root...`);
+            }
                 
-            // Check for merkle root
-            const storedMerkleRoot = await this.queryMerkleRoot(ctx);
+            // Check for merkle root integrity
             if (!storedMerkleRoot || !storedMerkleRoot.merkleRoot) {
                 return JSON.stringify({ 
                     error: "No valid Merkle root found. Wait a few seconds and retry.",

@@ -791,10 +791,7 @@ ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
       return result;
     }
     const result = await invokeChaincode(funcName, args);
-    if(funcName=="aggregateData"){
-      sendOutputToRenderer('Data aggregated');
-    }
-    else if(funcName=="deleteDataDB"){
+    if(funcName=="deleteDataDB"){
       sendOutputToRenderer('Off-chain database cleared');
     }
     else if(funcName=="validateData"){
