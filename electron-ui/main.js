@@ -411,7 +411,6 @@ function simulateData() {
   };
 }
 
-
 // Main function to invoke chaincode operations
 // Handles different chaincode functions with appropriate configurations and parameters
 async function invokeChaincode(funcName, args = []) {
@@ -768,7 +767,7 @@ ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
       const hasMissingArgs = args.some(arg => arg === "" || arg === undefined || arg === null);
       const forceThresholdCheck = !hasMissingArgs;
 
-      //Check if data is provided
+      // Check if data is provided
       if (hasMissingArgs) {
         const simulatedData = simulateData();
         args = [
@@ -792,10 +791,7 @@ ipcMain.handle('invoke-chaincode', async (event, funcName, args) => {
       return result;
     }
     const result = await invokeChaincode(funcName, args);
-    if(funcName=="aggregateData"){
-      sendOutputToRenderer('Data aggregated');
-    }
-    else if(funcName=="deleteDataDB"){
+    if(funcName=="deleteDataDB"){
       sendOutputToRenderer('Off-chain database cleared');
     }
     else if(funcName=="validateData"){

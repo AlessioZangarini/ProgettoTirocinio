@@ -84,6 +84,16 @@
       }
       const result = await window.electronAPI.invokeChaincode('registerDataDB', args);
       appendToTerminal(result);
+
+      // Clear input fields
+      document.getElementById('co2').value = '';
+      document.getElementById('form').value = '';
+      document.getElementById('pm').value = '';
+      document.getElementById('sensor-id').innerHTML = '<option value="" disabled selected>Select a sensor ID</option>';
+      document.getElementById('sensor-id').disabled = true;
+      document.getElementById('location').innerHTML = '<option value="" disabled selected>Select a location</option>';
+      document.getElementById('location').disabled = true;
+      document.getElementById('building').selectedIndex = 0;
     });
 
     // Aggregate Data button
