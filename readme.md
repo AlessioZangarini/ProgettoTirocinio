@@ -81,7 +81,9 @@ ProgettoTirocinio/
   │   ├── index.html   # User interface
   │   ├── main.js      # Main file for user interface
   │   ├── preload.js   # Electron preload script
-  │   └── renderer.js  # Electron renderer script
+  │   ├── renderer.js  # Electron renderer script
+  │   ├── config.json  # Configuration file
+  │   └── network-state.json # Network Initialization file
   ├── fabric-samples/  # Hyperledger Fabric Folder
   ├── main/            # Application code
   │   ├── lib/         # Chaincode 
@@ -103,7 +105,19 @@ ProgettoTirocinio/
     cd electron-ui
     npm start
 ```
- 
+
+## Configuration file
+Inside the electron-ui folder there is a file named "config.json", this file is editable, and it contains various parameters to edit the system behavior:
+- "simulation" : this section is used for editing the simulation parameters; 
+    - "value" : integer number for setting time unit quantity
+    - "unit" : string to edit time unit typer (seconds-minutes-hours)
+- "thresholdAlerts" : this section handles the behavior of the system with threshold values:
+    - "autoRegisterExceededData" : boolean value to determine if the value that exceeds the threshold is saved or not
+    - "applyThresholdsToSimulation" : boolean value to determine if the thresholds are applied to the simulation
+- "networkManagement" : this section is for network behavior
+    - "autoCloseOnExit" : boolean value to determine if the network shuts down if the interface is closed
+- "pollutantThresholds" : various editable thresholds for alarm system (float value)
+
 ## Cleanup operation
 It is also possible to clean up the environment variables set by the program
 - Running the cleanup-env.sh
