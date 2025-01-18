@@ -283,13 +283,6 @@ async function readKeyFromWSL(org) {
   }
 }
 
-// Send output messages to the renderer process
-function sendOutputToRenderer(output) {
-  if (mainWindow) { 
-    mainWindow.webContents.send('command-output', output);
-  }
-}
-
 // Send alerts when pollutant thresholds are exceeded
 function sendAlertToRenderer(pollutant, value, threshold) {
   if (mainWindow) {
@@ -519,6 +512,175 @@ async function invokeChaincode(funcName, args = []) {
     throw error;
   }
 }
+
+// Function to format sensor data output
+function formatSensorData(data) {
+  const sensorData = JSON.parse(data);
+  return `
+[DATA REGISTRATION]
+Location: ${sensorData.location}
+Sensor ID: ${sensorData.sensorId}
+Registration Time: ${new Date(sensorData.timestamp).toLocaleString()}
+
+Measurements:
+- CO2:   ${sensorData.CO2.value.toString().padStart(8)} ${sensorData.CO2.unit}
+- PM2.5: ${sensorData.PM25.value.toString().padStart(8)} ${sensorData.PM25.unit}
+- VOCs:  ${sensorData.VOCs.value.toString().padStart(8)} ${sensorData.VOCs.unit}`;
+}
+
+// Function to format aggregation data output
+function formatAggregationData(data) {
+  const aggData = JSON.parse(data);
+  const timestamp = new Date(aggData.aggregatedData.timestamp).toLocaleString();
+  return `
+[DATA AGGREGATION]
+Aggregation Time: ${timestamp}
+Samples Processed: ${aggData.aggregatedData.dataCount}
+
+Average Measurements:
+- CO2:   ${aggData.aggregatedData.avgCO2.value.toFixed(1).padStart(8)} ${aggData.aggregatedData.avgCO2.unit}
+- PM2.5: ${aggData.aggregatedData.avgPM25.value.toFixed(2).padStart(8)} ${aggData.aggregatedData.avgPM25.unit}
+- VOCs:  ${aggData.aggregatedData.avgVOCs.value.toFixed(3).padStart(8)} ${aggData.aggregatedData.avgVOCs.unit}`;
+}
+
+// Function to format query results
+function formatQueryResults(data) {
+  const queryData = JSON.parse(data);
+  
+  if (queryData.error && queryData.error.includes('Data count mismatch')) {
+    return `
+[QUERY RESULTS]
+Error: Data synchronization in progress.
+Please wait a few seconds and try the aggregation again.`;
+  }
+  
+  if (queryData.error) {
+    return `
+[QUERY RESULTS]
+Error: ${queryData.error}`;
+  }
+
+  const aggregations = Array.isArray(queryData) ? queryData : [];
+  let output = `
+[QUERY RESULTS]
+Found ${aggregations.length} aggregation(s)`;
+
+  aggregations.forEach((agg, index) => {
+    const timestamp = new Date(agg.data.timestamp).toLocaleString();
+    output += `
+
+Aggregation #${index + 1}:
+ID: ${agg.id}
+Time: ${timestamp}
+
+Measurements:
+- CO2:   ${agg.data.avgCO2.value.toFixed(1).padStart(8)} ${agg.data.avgCO2.unit}
+- PM2.5: ${agg.data.avgPM25.value.toFixed(2).padStart(8)} ${agg.data.avgPM25.unit}
+- VOCs:  ${agg.data.avgVOCs.value.toFixed(3).padStart(8)} ${agg.data.avgVOCs.unit}`;
+  });
+
+  return output;
+}
+
+// Function to format validation results
+function formatValidationData(data) {
+  const validationData = (typeof data === 'string') ? JSON.parse(data) : data;
+  
+  return `
+[DATA VALIDATION]
+Status: ${validationData.status}
+Message: ${validationData.message}
+
+Statistics:
+- Total Aggregations:     ${validationData.statistics.total}
+- Successfully Validated: ${validationData.statistics.successful}
+- Failed Validation:      ${validationData.statistics.failed}
+
+Validation ID: ${validationData.validationResultId}`;
+}
+
+// Function to extract payload from chaincode output
+function extractPayload(output) {
+  const start = output.indexOf('payload:"') + 9;
+  const end = output.lastIndexOf('"');
+  if (start > 8 && end > start) {
+    return output.substring(start, end).replace(/\\"/g, '"');
+  }
+  return null;
+}
+
+// Function to process chaincode output
+function processOutput(output) {
+  const payload = extractPayload(output);
+  if (!payload) return output;
+
+  try {
+    if (payload.includes("status")) {
+      return formatValidationData(payload);
+    } else if (payload.includes("aggregatedData")) {
+      return formatAggregationData(payload);
+    } else if (payload.includes("sensorId")) {
+      return formatSensorData(payload);
+    } else if (payload.includes("error") || Array.isArray(JSON.parse(payload))) {
+      return formatQueryResults(payload);
+    }
+  } catch (error) {
+    console.error('Error processing output:', error);
+    return output;
+  }
+  
+  return output;
+}
+
+function addSystemMessage(message) {
+  return `[SYSTEM] ${message}`;
+}
+
+function addSimulationMessage(message) {
+  return `[SIMULATION] ${message}`;
+}
+
+function addSuccessMessage(message) {
+  return `[SUCCESS] ${message}`;
+}
+
+// Modified sendOutputToRenderer function
+function sendOutputToRenderer(output) {
+  if (!mainWindow) return;
+
+  let formattedOutput = output;
+
+  // Non-chaincode outputs
+  if (!output.includes('Output:')) {
+    if (output.includes('Starting simulation')) {
+      formattedOutput = addSimulationMessage('Starting sensor data generation...');
+    } else if (output.includes('Simulation stopped')) {
+      formattedOutput = addSimulationMessage('Sensor data generation stopped');
+    } else if (output.includes('Off-chain database cleared')) {
+      formattedOutput = `${addSystemMessage('Clearing off-chain database...')}\n${addSuccessMessage('Database cleared successfully')}`;
+    } else if (output.includes('Incomplete data fields')) {
+      formattedOutput = addSimulationMessage('Generating sensor data...');
+    } else if (output.includes('Network already initialized')) {
+      formattedOutput = addSystemMessage('Network is already running');
+    } else if (output.includes('Initializing Ledger')) {
+      formattedOutput = addSystemMessage('Initializing network...');
+    } else if (output.includes('Chaincode deployed')) {
+      formattedOutput = addSuccessMessage('Network initialized successfully');
+    } else if (output.includes('Data validated')) {
+      formattedOutput = addSuccessMessage('Data validation completed');
+    } else if (output.startsWith('Calling')) {
+      const operation = output.replace('Calling ', '').replace('...', '');
+      formattedOutput = addSystemMessage(`Processing ${operation}...`);
+    }
+  } else {
+    formattedOutput = processOutput(output);
+  }
+
+  mainWindow.webContents.send('command-output', formattedOutput + '\n\n');
+}
+
+module.exports = { sendOutputToRenderer };
+
 
 // Start the IoT data simulation process
 function startSimulation() {
