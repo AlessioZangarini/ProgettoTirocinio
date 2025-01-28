@@ -30,6 +30,13 @@ let isSimulationRunning = false; // Flag to track simulation status
 let isAggregatingData = false;   // Flag to prevent concurrent aggregation
 let mainWindow = null;           // Main application window reference
 
+// Initialize static flags for terminal
+sendOutputToRenderer.initMessageSent = false;
+sendOutputToRenderer.statusShown = false;
+sendOutputToRenderer.channelShown = false;
+sendOutputToRenderer.chaincodeShown = false;
+module.exports = { sendOutputToRenderer };
+
 // Load configuration
 const config = loadConfiguration();
 
@@ -513,90 +520,45 @@ async function invokeChaincode(funcName, args = []) {
   }
 }
 
-// Function to format sensor data output
-function formatSensorData(data) {
-  const sensorData = JSON.parse(data);
-  return `
-[DATA REGISTRATION]
-Location: ${sensorData.location}
-Sensor ID: ${sensorData.sensorId}
-Registration Time: ${new Date(sensorData.timestamp).toLocaleString()}
+// Function to parse chaincode deployment output
+function parseChaincodeDeployment(output) {
+  const steps = new Set();
+  const lines = output.split('\n');
 
-Measurements:
-- CO2:   ${sensorData.CO2.value.toString().padStart(8)} ${sensorData.CO2.unit}
-- PM2.5: ${sensorData.PM25.value.toString().padStart(8)} ${sensorData.PM25.unit}
-- VOCs:  ${sensorData.VOCs.value.toString().padStart(8)} ${sensorData.VOCs.unit}`;
-}
-
-// Function to format aggregation data output
-function formatAggregationData(data) {
-  const aggData = JSON.parse(data);
-  const timestamp = new Date(aggData.aggregatedData.timestamp).toLocaleString();
-  return `
-[DATA AGGREGATION]
-Aggregation Time: ${timestamp}
-Samples Processed: ${aggData.aggregatedData.dataCount}
-
-Average Measurements:
-- CO2:   ${aggData.aggregatedData.avgCO2.value.toFixed(1).padStart(8)} ${aggData.aggregatedData.avgCO2.unit}
-- PM2.5: ${aggData.aggregatedData.avgPM25.value.toFixed(2).padStart(8)} ${aggData.aggregatedData.avgPM25.unit}
-- VOCs:  ${aggData.aggregatedData.avgVOCs.value.toFixed(3).padStart(8)} ${aggData.aggregatedData.avgVOCs.unit}`;
-}
-
-// Function to format query results
-function formatQueryResults(data) {
-  const queryData = JSON.parse(data);
-  
-  if (queryData.error && queryData.error.includes('Data count mismatch')) {
-    return `
-[QUERY RESULTS]
-Error: Data synchronization in progress.
-Please wait a few seconds and try the aggregation again.`;
-  }
-  
-  if (queryData.error) {
-    return `
-[QUERY RESULTS]
-Error: ${queryData.error}`;
+  for (const line of lines) {
+    if (line.includes('Chaincode is packaged')) {
+      steps.add('- Package created successfully');
+    }
+    else if (line.includes('Chaincode is installed on peer0.org1')) {
+      steps.add('- Installed on Organization 1');
+    }
+    else if (line.includes('Chaincode is installed on peer0.org2')) {
+      steps.add('- Installed on Organization 2');
+    }
+    else if (line.includes('Chaincode definition approved on peer0.org1')) {
+      steps.add('- Approved by Organization 1');
+    }
+    else if (line.includes('Chaincode definition approved on peer0.org2')) {
+      steps.add('- Approved by Organization 2');
+    }
+    else if (line.includes('Chaincode definition committed on channel')) {
+      steps.add('- Definition committed to channel');
+    }
   }
 
-  const aggregations = Array.isArray(queryData) ? queryData : [];
-  let output = `
-[QUERY RESULTS]
-Found ${aggregations.length} aggregation(s)`;
+  if (steps.size > 0) {
+    return `[NETWORK] Deploying chaincode progress:
+[DETAILS]
+- Package name: ProgettoTirocinio
+- Language: JavaScript
+- Channel: mychannel
 
-  aggregations.forEach((agg, index) => {
-    const timestamp = new Date(agg.data.timestamp).toLocaleString();
-    output += `
+[PROGRESS]
+${Array.from(steps).join('\n')}
 
-Aggregation #${index + 1}:
-ID: ${agg.id}
-Time: ${timestamp}
-
-Measurements:
-- CO2:   ${agg.data.avgCO2.value.toFixed(1).padStart(8)} ${agg.data.avgCO2.unit}
-- PM2.5: ${agg.data.avgPM25.value.toFixed(2).padStart(8)} ${agg.data.avgPM25.unit}
-- VOCs:  ${agg.data.avgVOCs.value.toFixed(3).padStart(8)} ${agg.data.avgVOCs.unit}`;
-  });
-
-  return output;
-}
-
-// Function to format validation results
-function formatValidationData(data) {
-  const validationData = (typeof data === 'string') ? JSON.parse(data) : data;
-  
-  return `
-[DATA VALIDATION]
-Status: ${validationData.status}
-Message: ${validationData.message}
-
-Statistics:
-- Total Aggregations:     ${validationData.statistics.total}
-- Successfully Validated: ${validationData.statistics.successful}
-- Failed Validation:      ${validationData.statistics.failed}
-
-Validation ID: ${validationData.validationResultId}`;
+This process may take a few minutes...`;
+  }
+  return null;
 }
 
 // Function to extract payload from chaincode output
@@ -609,78 +571,183 @@ function extractPayload(output) {
   return null;
 }
 
-// Function to process chaincode output
-function processOutput(output) {
-  const payload = extractPayload(output);
-  if (!payload) return output;
-
+// Function to format operation results
+function formatOperationOutput(output, payload) {
   try {
-    if (payload.includes("status")) {
-      return formatValidationData(payload);
-    } else if (payload.includes("aggregatedData")) {
-      return formatAggregationData(payload);
-    } else if (payload.includes("sensorId")) {
-      return formatSensorData(payload);
-    } else if (payload.includes("error") || Array.isArray(JSON.parse(payload))) {
-      return formatQueryResults(payload);
+    const data = JSON.parse(payload);
+    
+    // Handle error messages first
+    if (data.error) {
+      if (data.error.includes('No valid Merkle root found')) {
+        return `[SYSTEM] Aggregation delayed:
+- Status: Waiting for data synchronization
+- Action: Please retry in a few seconds`;
+      }
+      return `[ERROR] Operation failed: ${data.error}`;
+    }
+    
+    // Handle registration output
+    if (data.sensorId) {
+      return `[RESULT] Sensor data registered successfully:
+- Sensor: ${data.sensorId} (${data.location})
+- CO2: ${data.CO2.value} ${data.CO2.unit}
+- PM2.5: ${data.PM25.value} ${data.PM25.unit}
+- VOCs: ${data.VOCs.value} ${data.VOCs.unit}`;
+    }
+
+    // Handle aggregation output
+    else if (data.aggregatedData) {
+      return `[RESULT] Data aggregated successfully:
+- Samples processed: ${data.aggregatedData.dataCount}
+- Average CO2: ${data.aggregatedData.avgCO2.value.toFixed(1)} ${data.aggregatedData.avgCO2.unit}
+- Average PM2.5: ${data.aggregatedData.avgPM25.value.toFixed(2)} ${data.aggregatedData.avgPM25.unit}
+- Average VOCs: ${data.aggregatedData.avgVOCs.value.toFixed(3)} ${data.aggregatedData.avgVOCs.unit}`;
+    }
+
+    // Handle validation output
+    else if (data.status) {
+      return `[RESULT] Data validation completed:
+- Status: ${data.status}
+- Total aggregations: ${data.statistics.total}
+- Successfully validated: ${data.statistics.successful}
+- Failed validation: ${data.statistics.failed}`;
+    }
+    
+    // Handle query output
+    else if (Array.isArray(data)) {
+      return `[RESULT] Found ${data.length} aggregation(s):
+${data.map((agg, i) => `Aggregation #${i + 1}:
+- Time: ${new Date(agg.data.timestamp).toLocaleString()}
+- CO2: ${agg.data.avgCO2.value.toFixed(1)} ${agg.data.avgCO2.unit}
+- PM2.5: ${agg.data.avgPM25.value.toFixed(2)} ${agg.data.avgPM25.unit}
+- VOCs: ${agg.data.avgVOCs.value.toFixed(3)} ${agg.data.avgVOCs.unit}`).join('\n')}`;
     }
   } catch (error) {
-    console.error('Error processing output:', error);
-    return output;
+    // Check for deleteDataDB success
+    if (output.includes('status:200') && output.toLowerCase().includes('successful')) {
+      return '[RESULT] Database cleared successfully';
+    }
+    console.error('Error formatting operation output:', error);
   }
-  
   return output;
 }
 
-function addSystemMessage(message) {
-  return `[SYSTEM] ${message}`;
-}
-
-function addSimulationMessage(message) {
-  return `[SIMULATION] ${message}`;
-}
-
-function addSuccessMessage(message) {
-  return `[SUCCESS] ${message}`;
-}
-
-// Modified sendOutputToRenderer function
+// Function to send data to terminal
 function sendOutputToRenderer(output) {
   if (!mainWindow) return;
 
-  let formattedOutput = output;
-
-  // Non-chaincode outputs
-  if (!output.includes('Output:')) {
-    if (output.includes('Starting simulation')) {
-      formattedOutput = addSimulationMessage('Starting sensor data generation...');
-    } else if (output.includes('Simulation stopped')) {
-      formattedOutput = addSimulationMessage('Sensor data generation stopped');
-    } else if (output.includes('Off-chain database cleared')) {
-      formattedOutput = `${addSystemMessage('Clearing off-chain database...')}\n${addSuccessMessage('Database cleared successfully')}`;
-    } else if (output.includes('Incomplete data fields')) {
-      formattedOutput = addSimulationMessage('Generating sensor data...');
-    } else if (output.includes('Network already initialized')) {
-      formattedOutput = addSystemMessage('Network is already running');
-    } else if (output.includes('Initializing Ledger')) {
-      formattedOutput = addSystemMessage('Initializing network...');
-    } else if (output.includes('Chaincode deployed')) {
-      formattedOutput = addSuccessMessage('Network initialized successfully');
-    } else if (output.includes('Data validated')) {
-      formattedOutput = addSuccessMessage('Data validation completed');
-    } else if (output.startsWith('Calling')) {
-      const operation = output.replace('Calling ', '').replace('...', '');
-      formattedOutput = addSystemMessage(`Processing ${operation}...`);
-    }
-  } else {
-    formattedOutput = processOutput(output);
+  let formattedOutput = '';
+  
+  // Network initialization messages
+  if ((output.includes('Opening network') || output.includes('Initializing Ledger')) && 
+      !sendOutputToRenderer.initMessageSent) {
+    formattedOutput = '[NETWORK] Starting network initialization...';
+    sendOutputToRenderer.initMessageSent = true;
   }
 
-  mainWindow.webContents.send('command-output', formattedOutput + '\n\n');
+  // Show component status
+  else if (output.includes('Using docker') && !output.includes('deploying chaincode') && 
+           !sendOutputToRenderer.statusShown) {
+    formattedOutput = `[NETWORK] Network components status:
+- Orderer Node: Ready
+- Organization 1 Peer: Ready
+- Organization 2 Peer: Ready`;
+    sendOutputToRenderer.statusShown = true;
+  }
+
+  // Channel creation
+  else if (output.includes('Creating channel') && !sendOutputToRenderer.channelShown) {
+    formattedOutput = `[NETWORK] Creating and configuring network channel...
+- Creating channel 'mychannel'
+- Adding Organization 1 to channel
+- Adding Organization 2 to channel
+- Committing channel configuration`;
+    sendOutputToRenderer.channelShown = true;
+  }
+
+  // Handle chaincode deployment output
+  else if (output.includes('Using docker') && output.includes('deploying chaincode')) {
+    const deploymentStatus = parseChaincodeDeployment(output);
+    if (deploymentStatus) {
+      formattedOutput = deploymentStatus;
+    }
+  }
+
+  // Initial chaincode deployment message
+  else if (output.includes('Deploying chaincode') && !sendOutputToRenderer.chaincodeShown) {
+    formattedOutput = `[NETWORK] Starting chaincode deployment:
+- Package name: ProgettoTirocinio
+- Language: JavaScript
+- Channel: mychannel
+- Peer organizations: 2 
+- This process may take a few minutes...`;
+    sendOutputToRenderer.chaincodeShown = true;
+  }
+  // Network success message
+  else if (output.includes('All commands executed successfully') || 
+           output.includes('[NETWORK] Chaincode deployed')) {
+    formattedOutput = '[SUCCESS] Network initialization completed successfully';
+    // Reset flags
+    sendOutputToRenderer.initMessageSent = false;
+    sendOutputToRenderer.statusShown = false;
+    sendOutputToRenderer.channelShown = false;
+    sendOutputToRenderer.chaincodeShown = false;
+  }
+  // Database operations
+  else if (output === 'Off-chain database cleared') {
+    formattedOutput = '[SUCCESS] Database cleared successfully';
+  }
+  // Simulation messages
+  else if (output.includes('Incomplete data fields')) {
+    formattedOutput = '[SIMULATION] Generating sensor data...';
+  }
+  else if (output.includes('Starting simulation')) {
+    formattedOutput = '[SIMULATION] Starting sensor data generation...';
+  }
+  else if (output.includes('Simulation stopped')) {
+    formattedOutput = '[SIMULATION] Sensor data generation stopped';
+  }
+  else if (output.includes('Simulation is already running')) {
+    formattedOutput = '[SIMULATION] Simulation is already in progress';
+  }
+  else if (output.includes('No simulation is currently running')) {
+    formattedOutput = '[SIMULATION] No simulation is currently running';
+  }
+
+  // System operation messages
+  else if (output.startsWith('Calling deleteDataDB')) {
+    formattedOutput = '[SYSTEM] Clearing database...';
+  }
+  else if (output.startsWith('Calling')) {
+    const operation = output.replace('Calling ', '').replace('...', '');
+    if (operation === 'deleteDataDB') {
+      formattedOutput = '[SYSTEM] Clearing database...';
+    } else {
+      formattedOutput = `[SYSTEM] Processing ${operation}...`;
+    }
+  }
+  // Handle operation outputs
+  else if (output.includes('Output:')) {
+    const payload = extractPayload(output);
+    if (payload) {
+      formattedOutput = formatOperationOutput(output, payload);
+    }
+  }
+  // Network status messages
+  else if (output.includes('Closing network')) {
+    formattedOutput = '[NETWORK] Shutting down network...';
+  }
+  else if (output.includes('Network closed')) {
+    formattedOutput = '[SUCCESS] Network shutdown completed successfully';
+  }
+  else if (output.includes('Network already initialized')) {
+    formattedOutput = '[INFO] Network is already running';
+  }
+
+  if (formattedOutput) {
+    mainWindow.webContents.send('command-output', formattedOutput + '\n\n');
+  }
 }
-
-module.exports = { sendOutputToRenderer };
-
 
 // Start the IoT data simulation process
 function startSimulation() {
@@ -884,7 +951,7 @@ ipcMain.handle('initializeLedger', async () => {
   try{
     sendOutputToRenderer('Initializing Ledger...');
     await openNetwork();
-    return `Chaincode deployed`;
+    return `[NETWORK] Chaincode deployed`;
   } catch (error) {
     return `Error invoking chaincode: ${error.message}`;
   }
