@@ -588,11 +588,22 @@ function formatOperationOutput(output, payload) {
     
     // Handle registration output
     if (data.sensorId) {
+      const location = typeof data.location === 'string' ? 
+        data.location :
+        `${data.location.building}, ${data.location.floor}`;
+        
+      const co2Value = data.CO2?.value ?? data.measurements?.CO2?.value;
+      const co2Unit = data.CO2?.unit ?? data.measurements?.CO2?.unit;
+      const pmValue = data.PM25?.value ?? data.measurements?.PM25?.value;
+      const pmUnit = data.PM25?.unit ?? data.measurements?.PM25?.unit;
+      const vocValue = data.VOCs?.value ?? data.measurements?.VOCs?.value;
+      const vocUnit = data.VOCs?.unit ?? data.measurements?.VOCs?.unit;
+
       return `[RESULT] Sensor data registered successfully:
-- Sensor: ${data.sensorId} (${data.location})
-- CO2: ${data.CO2.value} ${data.CO2.unit}
-- PM2.5: ${data.PM25.value} ${data.PM25.unit}
-- VOCs: ${data.VOCs.value} ${data.VOCs.unit}`;
+- Sensor: ${data.sensorId} (${location})
+- CO2: ${co2Value} ${co2Unit}
+- PM2.5: ${pmValue} ${pmUnit}
+- VOCs: ${vocValue} ${vocUnit}`;
     }
 
     // Handle aggregation output

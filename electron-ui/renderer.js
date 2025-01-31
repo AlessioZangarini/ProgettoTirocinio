@@ -77,14 +77,16 @@
       const co2 = document.getElementById('co2').value;
       const form = document.getElementById('form').value;
       const pm = document.getElementById('pm').value;
-
-      const args = [building, location, sensorId, co2, form, pm];
-      if(building==""||location==""||sensorId==""||co2==""||form==""||pm==""){
+    
+      // Format arguments correctly for manual input
+      const args = [sensorId, building, location, co2, form, pm];
+      
+      if(building === "" || location === "" || sensorId === "" || co2 === "" || form === "" || pm === "") {
         appendToTerminal('Incomplete data fields, simulating arguments...');
       }
       const result = await window.electronAPI.invokeChaincode('registerDataDB', args);
       appendToTerminal(result);
-
+    
       // Clear input fields
       document.getElementById('co2').value = '';
       document.getElementById('form').value = '';
